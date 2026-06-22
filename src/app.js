@@ -2,11 +2,22 @@ import {
   normalizeCandidate,
   rankCandidates,
 } from "./ranking.js";
+import {
+  MAX_REVIEW_LOG_ROWS,
+  appendReviewRow,
+  createReviewRow,
+  toCsv,
+} from "./review-log.js";
 
 const API_URL = "https://api.inaturalist.org/v2/exemplar_identifications";
 const TAXA_URL = "https://api.inaturalist.org/v2/taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
+const LOG_STORAGE_KEY = "inat-id-tip-review-log-v1";
+const SYNC_KEY_STORAGE = "inat-id-tip-review-sync-key-v1";
+const SYNC_ENDPOINT = "https://inat-id-tips-review.intrinsic3141.workers.dev/reviews";
 const PAGE_SIZE = 50;
+const MAX_API_RECORDS = 1000;
+const SYNC_BATCH_SIZE = 100;
 const CANDIDATE_FIELDS = [
   "id",
   "identification.id",
@@ -52,6 +63,15 @@ const elements = {
   undo: document.querySelector("#undo-decision"),
   retry: document.querySelector("#retry-load"),
   reset: document.querySelector("#reset-history"),
+  downloadCsv: document.querySelector("#download-csv"),
+  syncStatus: document.querySelector("#sync-status"),
+  syncDialog: document.querySelector("#sync-dialog"),
+  openSync: document.querySelector("#open-sync"),
+  closeSync: document.querySelector("#close-sync"),
+  syncKey: document.querySelector("#sync-key"),
+  saveSyncKey: document.querySelector("#save-sync-key"),
+  syncNow: document.querySelector("#sync-now"),
+  syncDialogStatus: document.querySelector("#sync-dialog-status"),
   reviewedCount: document.querySelector("#reviewed-count"),
   rejectedCount: document.querySelector("#rejected-count"),
   remainingCount: document.querySelector("#remaining-count"),
@@ -65,9 +85,16 @@ const state = {
   queue: [],
   cursor: 0,
   decisions: readDecisions(),
+  reviewLog: readReviewLog(),
   history: [],
   loading: false,
   request: null,
+  page: 1,
+  loadedCount: 0,
+  hasMore: true,
+  syncing: false,
+  syncError: "",
+  syncTimer: null,
   taxonCache: new Map(),
   filters: {
     taxonId: "",
@@ -88,14 +115,68 @@ function writeDecisions() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.decisions));
 }
 
+function readReviewLog() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(LOG_STORAGE_KEY) ?? "[]");
+    return Array.isArray(rows) ? rows.slice(-MAX_REVIEW_LOG_ROWS) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeReviewLog() {
+  localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(state.reviewLog));
+}
+
+function syncKey() {
+  return sessionStorage.getItem(SYNC_KEY_STORAGE) ?? "";
+}
+
 function updateStats() {
   const decisions = Object.values(state.decisions);
+  const pending = state.reviewLog.filter((row) => !row.synced_at).length;
   elements.reviewedCount.textContent = decisions.filter((item) => item.decision === "review").length;
   elements.rejectedCount.textContent = decisions.filter((item) => item.decision === "reject").length;
   elements.remainingCount.textContent = state.loading
     ? "—"
     : Math.max(0, state.queue.length - state.cursor);
   elements.undo.disabled = state.history.length === 0;
+  elements.downloadCsv.disabled = state.reviewLog.length === 0;
+  elements.syncStatus.classList.toggle("is-connected", Boolean(syncKey()) && !state.syncing);
+  elements.syncStatus.classList.toggle("is-error", Boolean(state.syncError));
+  elements.syncStatus.textContent = state.syncing
+    ? `${state.reviewLog.length.toLocaleString()} / ${MAX_REVIEW_LOG_ROWS.toLocaleString()} rows · syncing ${pending}`
+    : `${state.reviewLog.length.toLocaleString()} / ${MAX_REVIEW_LOG_ROWS.toLocaleString()} rows · ${
+        state.syncError ? "sync error" : syncKey() ? `${pending} pending` : "repository not connected"
+      }`;
+}
+
+function recordAction(candidate, action) {
+  const row = { ...createReviewRow(candidate, action), synced_at: null };
+  state.reviewLog = appendReviewRow(state.reviewLog, row);
+  writeReviewLog();
+  updateStats();
+  scheduleSync();
+  return row.event_id;
+}
+
+function backfillTaxonLog(candidate) {
+  if (!candidate.taxon?.name) return;
+  let changed = false;
+  state.reviewLog = state.reviewLog.map((row) => {
+    if (String(row.taxon_id) !== String(candidate.taxonId) || row.species_name) return row;
+    changed = true;
+    return {
+      ...row,
+      species_name: candidate.taxon.name,
+      common_name: candidate.taxon.preferred_common_name ?? "",
+      synced_at: null,
+    };
+  });
+  if (changed) {
+    writeReviewLog();
+    scheduleSync();
+  }
 }
 
 function setLoading(loading) {
@@ -124,932 +205,441 @@ function withTimeout(promise, milliseconds, message) {
     timeout = setTimeout(() => reject(new Error(message)), milliseconds);
   });
   return Promise.race([promise, expiry]).finally(() => clearTimeout(timeout));
-…4319 tokens truncated…  box-sizing: border-box;
 }
 
-html {
-  background: var(--paper);
-  scroll-behavior: smooth;
-}
-
-body {
-  min-width: 320px;
-  margin: 0;
-  color: var(--ink);
-  background:
-    radial-gradient(circle at 14% 5%, rgb(231 185 81 / 16%), transparent 24rem),
-    linear-gradient(rgb(24 37 31 / 3%) 1px, transparent 1px),
-    var(--paper);
-  background-size: auto, 100% 48px, auto;
-}
-
-button,
-input,
-select {
-  font: inherit;
-}
-
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-[tabindex]:focus-visible {
-  outline: 3px solid var(--sun);
-  outline-offset: 3px;
-}
-
-a {
-  color: inherit;
-}
-
-.skip-link {
-  position: fixed;
-  z-index: 100;
-  top: 1rem;
-  left: 1rem;
-  padding: 0.75rem 1rem;
-  border-radius: 10px;
-  color: white;
-  background: var(--ink);
-  transform: translateY(-160%);
-  transition: transform 160ms ease;
-}
-
-.skip-link:focus {
-  transform: translateY(0);
-}
-
-.site-header,
-main,
-footer {
-  width: min(1180px, calc(100% - 40px));
-  margin-inline: auto;
-}
-
-.site-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 92px;
-  border-bottom: 1px solid rgb(24 37 31 / 16%);
-}
-
-.brand {
-  display: inline-flex;
-  gap: 0.75rem;
-  align-items: center;
-  color: inherit;
-  text-decoration: none;
-}
-
-.brand-mark {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 50% 50% 50% 12%;
-  color: white;
-  background: var(--moss);
-  font-family: Georgia, serif;
-  font-size: 0.95rem;
-  font-weight: 700;
-  transform: rotate(-4deg);
-}
-
-.brand > span:last-child {
-  display: grid;
-  line-height: 1.1;
-}
-
-.brand strong {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.15rem;
-  letter-spacing: -0.01em;
-}
-
-.brand small {
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 0.73rem;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-}
-
-.header-actions,
-.card-actions {
-  display: flex;
-  gap: 0.7rem;
-  align-items: center;
-}
-
-.quiet-button,
-.text-button,
-.icon-button,
-.primary-button,
-.reject-button,
-.skip-button,
-.nominate-button {
-  border: 0;
-  cursor: pointer;
-}
-
-.quiet-button {
-  display: inline-flex;
-  gap: 0.45rem;
-  align-items: center;
-  min-height: 40px;
-  padding: 0.6rem 0.8rem;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--ink);
-  background: rgb(255 253 247 / 60%);
-  font-size: 0.86rem;
-  text-decoration: none;
-}
-
-.quiet-button:hover {
-  border-color: #abaea8;
-  background: var(--panel);
-}
-
-kbd {
-  display: inline-grid;
-  min-width: 1.6rem;
-  min-height: 1.6rem;
-  padding-inline: 0.3rem;
-  place-items: center;
-  border: 1px solid rgb(24 37 31 / 22%);
-  border-bottom-width: 2px;
-  border-radius: 6px;
-  color: currentColor;
-  background: rgb(255 255 255 / 60%);
-  font-family: inherit;
-  font-size: 0.72rem;
-  font-weight: 750;
-  line-height: 1;
-}
-
-main {
-  padding-block: 64px 84px;
-}
-
-.intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
-  gap: 5rem;
-  align-items: end;
-  margin-bottom: 58px;
-}
-
-.eyebrow {
-  margin: 0 0 0.7rem;
-  color: var(--moss-bright);
-  font-size: 0.72rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-}
-
-h1,
-h2,
-p,
-dl,
-blockquote {
-  margin-top: 0;
-}
-
-h1,
-h2 {
-  font-family: Georgia, "Times New Roman", serif;
-  font-weight: 500;
-  letter-spacing: -0.035em;
-}
-
-h1 {
-  max-width: 720px;
-  margin-bottom: 1.25rem;
-  font-size: clamp(2.8rem, 6vw, 5.3rem);
-  line-height: 0.96;
-}
-
-.intro > div > p:last-child {
-  max-width: 660px;
-  margin-bottom: 0;
-  color: var(--muted);
-  font-size: 1.05rem;
-  line-height: 1.7;
-}
-
-.session-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--line);
-}
-
-.session-stats div {
-  min-width: 0;
-  padding: 1.1rem 0.9rem;
-  background: rgb(255 253 247 / 74%);
-}
-
-.session-stats dt {
-  font-family: Georgia, serif;
-  font-size: 1.65rem;
-  line-height: 1;
-}
-
-.session-stats dd {
-  margin: 0.45rem 0 0;
-  color: var(--muted);
-  font-size: 0.68rem;
-  line-height: 1.2;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.filters {
-  padding: 1.4rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius) var(--radius) 0 0;
-  background: rgb(255 253 247 / 72%);
-}
-
-.filter-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  align-items: end;
-  margin-bottom: 1.1rem;
-}
-
-.filter-heading h2 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-
-.filter-heading > p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.filters form {
-  display: grid;
-  grid-template-columns: minmax(130px, 0.75fr) minmax(220px, 1.5fr) minmax(150px, 0.8fr) auto;
-  gap: 0.8rem;
-  align-items: end;
-}
-
-label {
-  display: grid;
-  gap: 0.42rem;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 750;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-}
-
-input,
-select {
-  width: 100%;
-  height: 48px;
-  padding-inline: 0.9rem;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  color: var(--ink);
-  background: var(--panel);
-  font-size: 0.95rem;
-  text-transform: none;
-  letter-spacing: normal;
-}
-
-input::placeholder {
-  color: #a0a49f;
-}
-
-.primary-button {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 48px;
-  padding: 0.7rem 1rem;
-  border-radius: 11px;
-  color: white;
-  background: var(--ink);
-  font-weight: 750;
-}
-
-.primary-button:hover {
-  background: var(--moss);
-}
-
-.review-shell {
-  padding: 1.4rem;
-  border: 1px solid var(--line);
-  border-top: 0;
-  border-radius: 0 0 var(--radius) var(--radius);
-  background: rgb(255 253 247 / 44%);
-}
-
-.queue-meta,
-.queue-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  align-items: center;
-  color: var(--muted);
-  font-size: 0.78rem;
-}
-
-.queue-meta {
-  margin-bottom: 1rem;
-}
-
-.queue-meta > div {
-  display: flex;
-  gap: 0.55rem;
-  align-items: center;
-}
-
-.live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--moss-bright);
-  box-shadow: 0 0 0 5px rgb(57 119 90 / 11%);
-}
-
-.text-button {
-  padding: 0.3rem;
-  color: var(--muted);
-  background: transparent;
-  font-size: 0.77rem;
-  text-decoration: underline;
-  text-decoration-color: transparent;
-  text-underline-offset: 3px;
-}
-
-.text-button:hover {
-  color: var(--ink);
-  text-decoration-color: currentColor;
-}
-
-.text-button:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.review-card {
-  display: grid;
-  grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.18fr);
-  min-height: 580px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-
-.media-panel {
-  position: relative;
-  min-height: 420px;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 40% 30%, rgb(255 255 255 / 40%), transparent 20rem),
-    #cad2c5;
-}
-
-.media-panel::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  pointer-events: none;
-  background: linear-gradient(to top, rgb(12 28 20 / 45%), transparent 35%);
-}
-
-.media-panel img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.image-placeholder {
-  display: grid;
-  height: 100%;
-  place-content: center;
-  color: rgb(24 37 31 / 54%);
-  text-align: center;
-}
-
-.image-placeholder span {
-  font-family: Georgia, serif;
-  font-size: 5rem;
-}
-
-.image-placeholder p {
-  margin: 0;
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-
-.image-credit {
-  position: absolute;
-  z-index: 1;
-  right: 1rem;
-  bottom: 1rem;
-  left: 1rem;
-  color: rgb(255 255 255 / 82%);
-  font-size: 0.67rem;
-  line-height: 1.3;
-}
-
-.candidate-panel {
-  display: flex;
-  flex-direction: column;
-  padding: clamp(1.5rem, 4vw, 3.2rem);
-}
-
-.candidate-topline {
-  display: flex;
-  gap: 2rem;
-  align-items: start;
-  justify-content: space-between;
-}
-
-.common-name {
-  margin-bottom: 0.2rem;
-  font-family: Georgia, serif;
-  font-size: clamp(1.7rem, 3vw, 2.45rem);
-  line-height: 1.05;
-}
-
-.scientific-name {
-  margin-bottom: 0;
-  color: var(--muted);
-  font-family: Georgia, serif;
-  font-size: 0.98rem;
-  font-style: italic;
-}
-
-.score {
-  display: grid;
-  flex: 0 0 auto;
-  min-width: 67px;
-  min-height: 67px;
-  padding: 0.65rem;
-  place-content: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  color: var(--moss);
-  text-align: center;
-}
-
-.score span {
-  font-family: Georgia, serif;
-  font-size: 1.35rem;
-  line-height: 1;
-}
-
-.score small {
-  display: block;
-  margin-top: 0.25rem;
-  color: var(--muted);
-  font-size: 0.53rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-  min-height: 26px;
-  margin-top: 1.15rem;
-}
-
-.tag {
-  padding: 0.35rem 0.55rem;
-  border-radius: 999px;
-  color: var(--moss);
-  background: var(--fern);
-  font-size: 0.66rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 0.055em;
-}
-
-blockquote {
-  position: relative;
-  margin: 2rem 0 1.8rem;
-  padding-left: 1.2rem;
-  border-left: 3px solid var(--sun);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.18rem, 2.2vw, 1.55rem);
-  line-height: 1.48;
-}
-
-.identifier {
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
-
-.identifier img,
-.avatar-placeholder {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--fern);
-}
-
-.identifier > div:last-child {
-  display: grid;
-  gap: 0.1rem;
-}
-
-.identifier span {
-  color: var(--muted);
-  font-size: 0.7rem;
-}
-
-.identifier strong {
-  font-size: 0.85rem;
-}
-
-.boundary-note {
-  margin-top: auto;
-  margin-bottom: 1.25rem;
-  padding: 0.8rem 0.9rem;
-  border-left: 3px solid var(--moss-bright);
-  color: var(--muted);
-  background: #eef2ea;
-  font-size: 0.75rem;
-  line-height: 1.5;
-}
-
-.boundary-note strong {
-  color: var(--ink);
-}
-
-.card-actions {
-  display: grid;
-  grid-template-columns: auto auto minmax(190px, 1fr);
-}
-
-.reject-button,
-.skip-button,
-.nominate-button {
-  display: inline-flex;
-  gap: 0.5rem;
-  align-items: center;
-  justify-content: center;
-  min-height: 48px;
-  padding: 0.7rem 0.9rem;
-  border-radius: 11px;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.reject-button {
-  color: var(--rust);
-  background: var(--rust-pale);
-}
-
-.skip-button {
-  color: var(--ink);
-  background: #eceae3;
-}
-
-.nominate-button {
-  color: white;
-  background: var(--moss);
-}
-
-.nominate-button:hover {
-  background: var(--moss-bright);
-}
-
-.reject-button:hover {
-  background: #edcec3;
-}
-
-.skip-button:hover {
-  background: #e0ded6;
-}
-
-.card-actions button:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.empty-state,
-.error-state {
-  min-height: 360px;
-  padding: 4rem 1.5rem;
-  border: 1px dashed #b8b9b1;
-  border-radius: 18px;
-  background: var(--panel);
-  text-align: center;
-}
-
-.empty-state > span {
-  display: grid;
-  width: 62px;
-  height: 62px;
-  margin: 0 auto 1rem;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--moss);
-  background: var(--fern);
-  font-size: 1.6rem;
-}
-
-.empty-state h2 {
-  margin-bottom: 0.6rem;
-  font-size: 2rem;
-}
-
-.empty-state p,
-.error-state p {
-  color: var(--muted);
-}
-
-.queue-footer {
-  margin-top: 1rem;
-}
-
-.queue-footer p {
-  margin: 0;
-}
-
-.queue-footer .text-button {
-  display: inline-flex;
-  gap: 0.45rem;
-  align-items: center;
-  text-decoration: none;
-}
-
-.is-loading .candidate-panel > * {
-  opacity: 0.55;
-}
-
-.is-loading blockquote {
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.28;
+function makeImageUrl(candidate) {
+  const observationPhoto = candidate.photos.find((photo) => photo.url)?.url;
+  const taxonPhoto = candidate.taxon.default_photo?.medium_url;
+  const url = observationPhoto ?? taxonPhoto;
+  return url?.replace("/square.", "/medium.") ?? "";
+}
+
+function updateTaxonPresentation(candidate) {
+  if (candidate !== activeCandidate()) return;
+  elements.commonName.textContent =
+    candidate.taxon.preferred_common_name || candidate.taxon.name || `Taxon ${candidate.taxonId}`;
+  elements.scientificName.textContent = candidate.taxon.name ?? "";
+
+  if (elements.image.hidden && candidate.taxon.default_photo?.medium_url) {
+    elements.image.src = candidate.taxon.default_photo.medium_url;
+    elements.image.alt = `Reference photo for ${elements.commonName.textContent}`;
+    elements.image.hidden = false;
+    elements.imagePlaceholder.hidden = true;
+    elements.imageCredit.textContent =
+      candidate.taxon.default_photo.attribution ?? "Taxon photo via iNaturalist";
   }
 }
 
-dialog {
-  width: min(540px, calc(100% - 32px));
-  padding: 1.5rem;
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  color: var(--ink);
-  background: var(--panel);
-  box-shadow: var(--shadow);
+async function hydrateCandidateTaxon(candidate) {
+  if (!candidate.taxonId || candidate.taxon.name) return;
+
+  if (!state.taxonCache.has(candidate.taxonId)) {
+    const fields = "id,name,preferred_common_name,default_photo.medium_url,default_photo.attribution";
+    const request = withTimeout(
+      fetch(`${TAXA_URL}/${candidate.taxonId}?fields=${fields}`).then(async (response) => {
+        if (!response.ok) throw new Error(`Taxon lookup returned ${response.status}`);
+        const payload = await response.json();
+        return payload.results?.[0] ?? {};
+      }),
+      8000,
+      "Taxon lookup timed out",
+    ).catch(() => ({}));
+    state.taxonCache.set(candidate.taxonId, request);
+  }
+
+  candidate.taxon = await state.taxonCache.get(candidate.taxonId);
+  backfillTaxonLog(candidate);
+  updateTaxonPresentation(candidate);
 }
 
-dialog::backdrop {
-  background: rgb(18 29 23 / 55%);
-  backdrop-filter: blur(4px);
+function renderTags(candidate) {
+  elements.tags.replaceChildren();
+  const tags = candidate.tags.length ? candidate.tags : ["explanatory remark"];
+  tags.forEach((label) => {
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = label;
+    elements.tags.append(tag);
+  });
 }
 
-.dialog-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
+function renderIdentifier(candidate) {
+  const identifier = candidate.identifier;
+  elements.identifier.replaceChildren();
+
+  if (identifier.icon) {
+    const avatar = document.createElement("img");
+    avatar.src = identifier.icon;
+    avatar.alt = "";
+    avatar.loading = "lazy";
+    elements.identifier.append(avatar);
+  } else {
+    const placeholder = document.createElement("div");
+    placeholder.className = "avatar-placeholder";
+    placeholder.setAttribute("aria-hidden", "true");
+    elements.identifier.append(placeholder);
+  }
+
+  const text = document.createElement("div");
+  const label = document.createElement("span");
+  const name = document.createElement("strong");
+  const count = Number(identifier.identifications_count ?? 0).toLocaleString();
+  label.textContent = `Identification by · ${count} IDs`;
+  name.textContent = identifier.name || identifier.login || `User ${identifier.id ?? "unknown"}`;
+  text.append(label, name);
+  elements.identifier.append(text);
 }
 
-.dialog-heading h2 {
-  margin-bottom: 1.4rem;
-  font-size: 2rem;
+function renderCandidate() {
+  const candidate = activeCandidate();
+  setLoading(false);
+
+  if (!candidate) {
+    if (state.hasMore && state.loadedCount < MAX_API_RECORDS) {
+      [elements.reject, elements.skip, elements.review].forEach((button) => {
+        button.disabled = true;
+      });
+      elements.queueLabel.textContent = `${state.loadedCount} API records scanned · continuing in 1 second`;
+      setTimeout(() => {
+        if (!state.loading && !activeCandidate()) loadNextPage();
+      }, 1000);
+      return;
+    }
+    setView("empty");
+    elements.queueLabel.textContent = "Queue complete";
+    updateStats();
+    return;
+  }
+
+  setView("card");
+  const queuePosition = state.cursor + 1;
+  elements.queueLabel.textContent = `Candidate ${queuePosition} of ${state.queue.length} · ${state.loadedCount} API records scanned`;
+  updateTaxonPresentation(candidate);
+  elements.score.textContent = candidate.score;
+  elements.remark.textContent = candidate.remark;
+  elements.review.dataset.url = candidate.observationUrl;
+  renderTags(candidate);
+  renderIdentifier(candidate);
+
+  const imageUrl = makeImageUrl(candidate);
+  if (imageUrl) {
+    const commonName = candidate.taxon.preferred_common_name || candidate.taxon.name || "organism";
+    elements.image.src = imageUrl;
+    elements.image.alt = `Observation photo for ${commonName}`;
+    elements.image.hidden = false;
+    elements.imagePlaceholder.hidden = true;
+    elements.imageCredit.textContent = candidate.photos[0]?.attribution ?? "Observation photo via iNaturalist";
+  } else {
+    elements.image.removeAttribute("src");
+    elements.image.hidden = true;
+    elements.imagePlaceholder.hidden = false;
+    elements.imageCredit.textContent = "";
+  }
+
+  elements.reject.disabled = false;
+  elements.skip.disabled = false;
+  elements.review.disabled = false;
+  updateStats();
+  hydrateCandidateTaxon(candidate);
 }
 
-.icon-button {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  color: var(--muted);
-  background: #eceae3;
-  font-size: 1.4rem;
+function buildCandidateUrl() {
+  const params = new URLSearchParams({
+    per_page: String(PAGE_SIZE),
+    page: String(state.page),
+    nominated: "false",
+    fields: CANDIDATE_FIELDS,
+  });
+
+  if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+  if (state.filters.query) params.set("q", state.filters.query);
+  return `${API_URL}?${params}`;
 }
 
-.shortcut-list {
-  display: grid;
-  gap: 0;
-  margin-bottom: 1rem;
-  border-top: 1px solid var(--line);
+function syncUrl() {
+  const params = new URLSearchParams();
+  if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+  if (state.filters.query) params.set("q", state.filters.query);
+  if (state.filters.minimumWords !== 12) params.set("min_words", state.filters.minimumWords);
+  const suffix = params.size ? `?${params}` : location.pathname;
+  history.replaceState(null, "", suffix);
 }
 
-.shortcut-list div {
-  display: grid;
-  grid-template-columns: 54px 1fr;
-  gap: 1rem;
-  align-items: center;
-  padding-block: 0.8rem;
-  border-bottom: 1px solid var(--line);
-}
+async function loadNextPage() {
+  if (state.loading || !state.hasMore || state.loadedCount >= MAX_API_RECORDS) return;
+  state.request = new AbortController();
+  setView("card");
+  setLoading(true);
+  elements.queueLabel.textContent = `Loading API records ${state.loadedCount + 1}–${Math.min(
+    state.loadedCount + PAGE_SIZE,
+    MAX_API_RECORDS,
+  )}…`;
+  elements.remark.textContent = "Reading identification remarks and ranking explanatory candidates…";
 
-.shortcut-list dd {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.85rem;
-}
+  try {
+    const response = await withTimeout(
+      fetch(buildCandidateUrl(), { signal: state.request.signal }),
+      20000,
+      "The iNaturalist request timed out.",
+    );
+    if (!response.ok) throw new Error(`iNaturalist returned HTTP ${response.status}.`);
+    const payload = await response.json();
+    const records = payload.results ?? [];
+    state.loadedCount += records.length;
+    state.page += 1;
+    state.hasMore = records.length === PAGE_SIZE && state.loadedCount < MAX_API_RECORDS;
+    const candidates = records
+      .map((record) => normalizeCandidate(record, {}))
+      .filter((candidate) => !state.decisions[candidate.id]);
 
-.dialog-note {
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.toast {
-  position: fixed;
-  z-index: 50;
-  right: 24px;
-  bottom: 24px;
-  max-width: min(380px, calc(100% - 48px));
-  padding: 0.85rem 1rem;
-  border: 1px solid rgb(255 255 255 / 20%);
-  border-radius: 12px;
-  color: white;
-  background: var(--ink);
-  box-shadow: 0 15px 35px rgb(12 28 20 / 24%);
-  font-size: 0.82rem;
-}
-
-footer {
-  display: flex;
-  justify-content: space-between;
-  gap: 2rem;
-  align-items: center;
-  min-height: 100px;
-  border-top: 1px solid rgb(24 37 31 / 16%);
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
-footer p {
-  margin: 0;
-}
-
-footer a {
-  flex: 0 0 auto;
-}
-
-[hidden] {
-  display: none !important;
-}
-
-@media (max-width: 900px) {
-  .intro {
-    grid-template-columns: 1fr;
-    gap: 2.5rem;
-  }
-
-  .intro > div > p:last-child {
-    max-width: 760px;
-  }
-
-  .filters form {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .review-card {
-    grid-template-columns: 1fr;
-  }
-
-  .media-panel {
-    min-height: 340px;
-    max-height: 460px;
-  }
-}
-
-@media (max-width: 620px) {
-  .site-header,
-  main,
-  footer {
-    width: min(100% - 24px, 1180px);
-  }
-
-  .site-header {
-    min-height: 78px;
-  }
-
-  .brand small,
-  .header-actions .quiet-button:last-child,
-  .filter-heading > p {
-    display: none;
-  }
-
-  .header-actions .quiet-button {
-    font-size: 0;
-  }
-
-  .header-actions .quiet-button kbd {
-    font-size: 0.72rem;
-  }
-
-  main {
-    padding-block: 46px 60px;
-  }
-
-  .intro {
-    margin-bottom: 42px;
-  }
-
-  h1 {
-    font-size: clamp(2.6rem, 15vw, 4rem);
-  }
-
-  .session-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .session-stats div {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-
-  .filters,
-  .review-shell {
-    padding: 0.85rem;
-  }
-
-  .filters form {
-    grid-template-columns: 1fr;
-  }
-
-  .queue-meta,
-  .queue-footer,
-  footer {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.7rem;
-  }
-
-  .review-card {
-    min-height: auto;
-  }
-
-  .media-panel {
-    min-height: 285px;
-  }
-
-  .candidate-panel {
-    padding: 1.25rem;
-  }
-
-  .candidate-topline {
-    gap: 1rem;
-  }
-
-  blockquote {
-    margin-block: 1.5rem;
-    font-size: 1.15rem;
-  }
-
-  .card-actions {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .nominate-button {
-    grid-column: 1 / -1;
-    grid-row: 1;
-  }
-
-  footer {
-    justify-content: center;
-    padding-block: 1.5rem;
+    state.queue.push(...rankCandidates(candidates, state.filters.minimumWords));
+    syncUrl();
+    renderCandidate();
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    setLoading(false);
+    setView("error");
+    elements.queueLabel.textContent = "Queue unavailable";
+    elements.errorMessage.textContent = `${error.message} Check your connection, then try again.`;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+function loadQueue() {
+  state.request?.abort();
+  state.queue = [];
+  state.cursor = 0;
+  state.page = 1;
+  state.loadedCount = 0;
+  state.hasMore = true;
+  loadNextPage();
+}
+
+function toast(message) {
+  elements.toast.textContent = message;
+  elements.toast.hidden = false;
+  clearTimeout(toast.timeout);
+  toast.timeout = setTimeout(() => {
+    elements.toast.hidden = true;
+  }, 3200);
+}
+
+function scheduleSync(delay) {
+  if (!syncKey() || state.syncing) return;
+  const pending = state.reviewLog.filter((row) => !row.synced_at).length;
+  if (!pending) return;
+  clearTimeout(state.syncTimer);
+  state.syncTimer = setTimeout(syncPending, delay ?? (pending >= 25 ? 2000 : 30000));
+}
+
+async function syncPending() {
+  const key = syncKey();
+  const pending = state.reviewLog.filter((row) => !row.synced_at).slice(0, SYNC_BATCH_SIZE);
+  if (!key) {
+    elements.syncDialogStatus.textContent = "Enter the Worker submission key before syncing.";
+    elements.syncKey.focus();
+    return;
+  }
+  if (!pending.length || state.syncing) return;
+
+  state.syncing = true;
+  updateStats();
+  elements.syncDialogStatus.textContent = `Syncing ${pending.length} row${pending.length === 1 ? "" : "s"}…`;
+
+  try {
+    state.syncError = "";
+    const response = await withTimeout(
+      fetch(SYNC_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-review-key": key },
+        body: JSON.stringify({ rows: pending }),
+      }),
+      30000,
+      "Repository sync timed out.",
+    );
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error ?? `Repository sync returned ${response.status}`);
+
+    const syncedIds = new Set(pending.map((row) => row.event_id));
+    const syncedAt = new Date().toISOString();
+    state.reviewLog = state.reviewLog.map((row) =>
+      syncedIds.has(row.event_id) ? { ...row, synced_at: syncedAt } : row,
+    );
+    writeReviewLog();
+    elements.syncDialogStatus.textContent = `${payload.saved} rows saved; ${payload.total} rows are now in the repository CSV.`;
+    toast(`${payload.saved} review rows synced to the repository.`);
+  } catch (error) {
+    state.syncError = error.message;
+    elements.syncDialogStatus.textContent = error.message;
+    toast(`Repository sync failed: ${error.message}`);
+  } finally {
+    state.syncing = false;
+    updateStats();
+    if (state.reviewLog.some((row) => !row.synced_at)) scheduleSync(2000);
   }
 }
+
+function saveSyncKey() {
+  const key = elements.syncKey.value.trim();
+  if (!key) {
+    elements.syncDialogStatus.textContent = "A submission key is required.";
+    return;
+  }
+  sessionStorage.setItem(SYNC_KEY_STORAGE, key);
+  state.syncError = "";
+  elements.syncKey.value = "";
+  elements.syncDialogStatus.textContent = "Connected for this browser tab. Syncing pending rows…";
+  updateStats();
+  syncPending();
+}
+
+function downloadCsv() {
+  if (!state.reviewLog.length) return;
+  const blob = new Blob([toCsv(state.reviewLog)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `inat-id-tip-review-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function advance() {
+  state.cursor += 1;
+  renderCandidate();
+  elements.card.focus({ preventScroll: true });
+}
+
+function decide(decision) {
+  const candidate = activeCandidate();
+  if (!candidate || state.loading) return;
+
+  if (decision === "review") {
+    window.open(candidate.observationUrl, "_blank", "noopener,noreferrer");
+  }
+
+  const logEventId = recordAction(candidate, decision === "review" ? "N" : "R");
+  state.history.push({ candidate, cursor: state.cursor, logEventId });
+  state.decisions[candidate.id] = { decision, at: new Date().toISOString() };
+  writeDecisions();
+  toast(
+    decision === "review"
+      ? "Opened the source observation. Nominate there if the remark holds up."
+      : "Rejected locally. Nothing was sent to iNaturalist.",
+  );
+  advance();
+}
+
+function skip() {
+  const candidate = activeCandidate();
+  if (!candidate || state.loading) return;
+  recordAction(candidate, "S");
+  state.cursor += 1;
+  renderCandidate();
+  elements.card.focus({ preventScroll: true });
+  toast("Skip recorded in the review log.");
+}
+
+function undo() {
+  const last = state.history.pop();
+  if (!last) return;
+  delete state.decisions[last.candidate.id];
+  writeDecisions();
+  state.reviewLog = state.reviewLog.filter((row) => row.event_id !== last.logEventId);
+  writeReviewLog();
+  state.cursor = Math.max(0, last.cursor);
+  state.queue[state.cursor] = last.candidate;
+  renderCandidate();
+  toast("Last local decision undone.");
+}
+
+function resetHistory() {
+  if (!Object.keys(state.decisions).length) {
+    toast("There are no saved decisions to reset.");
+    return;
+  }
+
+  localStorage.removeItem(STORAGE_KEY);
+  state.decisions = {};
+  state.history = [];
+  toast("Local review history cleared.");
+  loadQueue();
+}
+
+function applyFilters(event) {
+  event?.preventDefault();
+  state.filters = {
+    taxonId: elements.taxonId.value.trim(),
+    query: elements.query.value.trim(),
+    minimumWords: Number(elements.minimumWords.value),
+  };
+  loadQueue();
+}
+
+function restoreFiltersFromUrl() {
+  const params = new URLSearchParams(location.search);
+  state.filters.taxonId = params.get("taxon_id") ?? "";
+  state.filters.query = params.get("q") ?? "";
+  state.filters.minimumWords = Number(params.get("min_words") ?? 12);
+  elements.taxonId.value = state.filters.taxonId;
+  elements.query.value = state.filters.query;
+  elements.minimumWords.value = String(state.filters.minimumWords);
+}
+
+function isTypingTarget(target) {
+  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
+}
+
+elements.form.addEventListener("submit", applyFilters);
+elements.reject.addEventListener("click", () => decide("reject"));
+elements.review.addEventListener("click", () => decide("review"));
+elements.skip.addEventListener("click", skip);
+elements.undo.addEventListener("click", undo);
+elements.retry.addEventListener("click", loadQueue);
+elements.reset.addEventListener("click", resetHistory);
+elements.downloadCsv.addEventListener("click", downloadCsv);
+elements.openSync.addEventListener("click", () => elements.syncDialog.showModal());
+elements.closeSync.addEventListener("click", () => elements.syncDialog.close());
+elements.saveSyncKey.addEventListener("click", saveSyncKey);
+elements.syncNow.addEventListener("click", syncPending);
+elements.openShortcuts.addEventListener("click", () => elements.shortcuts.showModal());
+elements.closeShortcuts.addEventListener("click", () => elements.shortcuts.close());
+elements.shortcuts.addEventListener("click", (event) => {
+  if (event.target === elements.shortcuts) elements.shortcuts.close();
+});
+elements.syncDialog.addEventListener("click", (event) => {
+  if (event.target === elements.syncDialog) elements.syncDialog.close();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (isTypingTarget(event.target)) return;
+  const key = event.key.toLowerCase();
+  if (key === "?" && !elements.shortcuts.open) {
+    event.preventDefault();
+    elements.shortcuts.showModal();
+  } else if (key === "n") {
+    event.preventDefault();
+    decide("review");
+  } else if (key === "r") {
+    event.preventDefault();
+    decide("reject");
+  } else if (key === "s") {
+    event.preventDefault();
+    skip();
+  } else if (key === "u") {
+    event.preventDefault();
+    undo();
+  }
+});
+
+elements.image.addEventListener("error", () => {
+  elements.image.hidden = true;
+  elements.imagePlaceholder.hidden = false;
+  elements.imageCredit.textContent = "";
+});
+
+restoreFiltersFromUrl();
+updateStats();
+loadQueue();
+scheduleSync(2000);

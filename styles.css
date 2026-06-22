@@ -378,6 +378,25 @@ input::placeholder {
   align-items: center;
 }
 
+.queue-meta > .queue-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sync-status {
+  margin-right: 0.2rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.sync-status.is-connected {
+  color: var(--moss-bright);
+}
+
+.sync-status.is-error {
+  color: var(--rust);
+}
+
 .live-dot {
   width: 7px;
   height: 7px;
@@ -777,6 +796,31 @@ dialog::backdrop {
   font-size: 0.75rem;
 }
 
+.dialog-copy {
+  margin-bottom: 1.2rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+
+.dialog-copy code {
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  color: var(--ink);
+  background: #eceae3;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 0.7rem;
+  justify-content: flex-end;
+  margin-block: 1rem;
+}
+
+.dialog-actions .primary-button {
+  min-width: 130px;
+}
+
 .toast {
   position: fixed;
   z-index: 50;
@@ -901,6 +945,16 @@ footer a {
     align-items: flex-start;
     flex-direction: column;
     gap: 0.7rem;
+  }
+
+  .queue-meta > .queue-tools {
+    width: 100%;
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .sync-status {
+    width: 100%;
   }
 
   .review-card {

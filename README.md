@@ -4,11 +4,13 @@ A keyboard-first, human-in-the-loop review queue for finding useful remarks atta
 
 The app queries the public V2 `exemplar_identifications` resource for **un-nominated identification remarks**, scores explanatory language locally, and presents promising candidates for review. It does not call nomination or voting endpoints. “Review on iNaturalist” opens the source observation; “Reject locally” only records a decision in the browser’s local storage.
 
+It requests 50 API records per page and continues through at most 1,000 records for each filter set. One ranked candidate is displayed at a time.
+
 ## Review controls
 
 - `N` — open the source observation and mark the candidate as sent to review
 - `R` — reject the candidate locally
-- `S` — skip to the next candidate
+- `S` — record a skip and move to the next candidate
 - `U` — undo the last local decision
 - `?` — show keyboard shortcuts
 
@@ -30,6 +32,8 @@ Then open `http://localhost:4173`.
 - Reads public data from `https://api.inaturalist.org/v2/exemplar_identifications`.
 - Retrieves the active candidate’s label from the public V2 taxa endpoint and caches it locally.
 - Stores review/reject decisions only in local storage.
+- Keeps a capped 1,000-row N/R/S audit log locally and supports CSV download.
+- Sends pending rows in batches to a protected Cloudflare Worker when a submission key is entered.
 - Does not request an iNaturalist login, API token, or OAuth grant.
 - Does not nominate, vote, downvote, or post on a user’s behalf.
 
@@ -38,3 +42,18 @@ Then open `http://localhost:4173`.
 Pushes to `main` run unit tests and deploy the static files with the official GitHub Pages actions. Repository Pages must allow GitHub Actions deployment; the workflow requests first-run enablement.
 
 This is an independent project and is not affiliated with or endorsed by iNaturalist.
+
+## Repository CSV Worker
+
+The Worker in `worker/` validates review rows and appends them to `data/reviews.csv` through the GitHub Contents API. It deduplicates by event ID, retries write conflicts, and keeps the newest 1,000 rows. Browser code never receives the GitHub token.
+
+Install dependencies and configure the two required secrets:
+
+```sh
+npm install
+npx wrangler secret put GITHUB_TOKEN --config worker/wrangler.jsonc
+npx wrangler secret put SUBMISSION_KEY --config worker/wrangler.jsonc
+npm run worker:deploy
+```
+
+`GITHUB_TOKEN` should be a fine-grained token restricted to this repository with **Contents: Read and write** permission. `SUBMISSION_KEY` is a separate shared key entered in the site’s Repository sync dialog. It authorizes submissions but grants no direct GitHub access.

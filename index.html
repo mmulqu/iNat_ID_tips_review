@@ -9,6 +9,7 @@
     />
     <meta name="theme-color" content="#f3f0e7" />
     <title>ID Tip Review</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://api.inaturalist.org" />
     <link rel="stylesheet" href="./styles.css" />
     <script type="module" src="./src/app.js"></script>
@@ -119,7 +120,12 @@
             <span class="live-dot" aria-hidden="true"></span>
             <span id="queue-label">Loading candidates…</span>
           </div>
-          <button class="text-button" id="reset-history" type="button">Reset local decisions</button>
+          <div class="queue-tools">
+            <span class="sync-status" id="sync-status">0 / 1,000 rows · repository not connected</span>
+            <button class="quiet-button" id="download-csv" type="button" disabled>Download CSV</button>
+            <button class="quiet-button" id="open-sync" type="button">Repository sync</button>
+            <button class="text-button" id="reset-history" type="button">Reset local decisions</button>
+          </div>
         </div>
 
         <article class="review-card is-loading" id="review-card" tabindex="-1">
@@ -199,7 +205,7 @@
             <kbd>U</kbd>
             Undo last decision
           </button>
-          <p>Candidate ranking happens in your browser. No account or token is requested.</p>
+          <p>Loads 50 API records at a time and scans up to 1,000 per filter set.</p>
         </div>
       </section>
     </main>
@@ -220,6 +226,32 @@
         <div><dt><kbd>?</kbd></dt><dd>Open this shortcut guide</dd></div>
       </dl>
       <p class="dialog-note">Shortcuts are paused while you type in a form field.</p>
+    </dialog>
+
+    <dialog id="sync-dialog">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Protected repository writer</p>
+          <h2>Connect review logging.</h2>
+        </div>
+        <button class="icon-button" id="close-sync" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="dialog-copy">
+        N, R, and S actions are kept locally and sent in small batches to
+        <code>data/reviews.csv</code>. Enter the Worker submission key; it remains in this browser
+        tab and is never committed to the site.
+      </p>
+      <label>
+        <span>Submission key</span>
+        <input id="sync-key" type="password" autocomplete="off" placeholder="Worker secret" />
+      </label>
+      <div class="dialog-actions">
+        <button class="quiet-button" id="sync-now" type="button">Sync pending rows</button>
+        <button class="primary-button" id="save-sync-key" type="button">Connect</button>
+      </div>
+      <p class="dialog-note" id="sync-dialog-status">
+        The GitHub token stays in the Worker; this key only authorizes review submissions.
+      </p>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
