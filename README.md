@@ -52,3 +52,7 @@ Then open `http://localhost:4173`.
 Pushes to `main` run unit tests and deploy the static files with the official GitHub Pages actions. Repository Pages must allow GitHub Actions deployment; the workflow requests first-run enablement.
 
 This is an independent project and is not affiliated with or endorsed by iNaturalist.
+
+## License
+
+Released under the [MIT License](LICENSE).

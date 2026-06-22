@@ -91,7 +91,7 @@ footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 92px;
+  min-height: 66px;
   border-bottom: 1px solid rgb(24 37 31 / 16%);
 }
 
@@ -191,15 +191,20 @@ kbd {
 }
 
 main {
-  padding-block: 64px 84px;
+  padding-block: 24px 40px;
 }
 
 .intro {
-  display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
-  gap: 5rem;
-  align-items: end;
-  margin-bottom: 58px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 3rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.intro > div {
+  flex: 1 1 460px;
 }
 
 .eyebrow {
@@ -227,22 +232,22 @@ h2 {
 }
 
 h1 {
-  max-width: 720px;
-  margin-bottom: 1.25rem;
-  font-size: clamp(2.8rem, 6vw, 5.3rem);
-  line-height: 0.96;
+  max-width: 16ch;
+  margin-bottom: 0.7rem;
+  font-size: clamp(1.9rem, 3.6vw, 3rem);
+  line-height: 1;
 }
 
 .intro > div > p:last-child {
-  max-width: 660px;
+  max-width: 620px;
   margin-bottom: 0;
   color: var(--muted);
-  font-size: 1.05rem;
-  line-height: 1.7;
+  font-size: 1rem;
+  line-height: 1.6;
 }
 
 .filters {
-  padding: 1.4rem;
+  padding: 1.15rem 1.2rem;
   border: 1px solid var(--line);
   border-radius: var(--radius) var(--radius) 0 0;
   background: rgb(255 253 247 / 72%);
@@ -253,12 +258,12 @@ h1 {
   justify-content: space-between;
   gap: 2rem;
   align-items: end;
-  margin-bottom: 1.1rem;
+  margin-bottom: 0.85rem;
 }
 
 .filter-heading h2 {
   margin: 0;
-  font-size: 1.5rem;
+  font-size: 1.35rem;
 }
 
 .filter-heading > p {
@@ -370,7 +375,7 @@ input::placeholder {
 }
 
 .review-shell {
-  padding: 1.4rem;
+  padding: 1.15rem 1.2rem 1.3rem;
   border: 1px solid var(--line);
   border-top: 0;
   border-radius: 0 0 var(--radius) var(--radius);
@@ -388,7 +393,7 @@ input::placeholder {
 }
 
 .queue-meta {
-  margin-bottom: 1rem;
+  margin-bottom: 0.7rem;
 }
 
 .queue-meta > div {
@@ -432,8 +437,8 @@ input::placeholder {
 
 .review-card {
   display: grid;
-  grid-template-columns: minmax(300px, 0.82fr) minmax(420px, 1.18fr);
-  min-height: 580px;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(420px, 1.2fr);
+  min-height: 440px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -443,7 +448,7 @@ input::placeholder {
 
 .media-panel {
   position: relative;
-  min-height: 420px;
+  min-height: 300px;
   overflow: hidden;
   background:
     radial-gradient(circle at 40% 30%, rgb(255 255 255 / 40%), transparent 20rem),
@@ -499,7 +504,7 @@ input::placeholder {
 .candidate-panel {
   display: flex;
   flex-direction: column;
-  padding: clamp(1.5rem, 4vw, 3.2rem);
+  padding: clamp(1.3rem, 2.6vw, 2.1rem);
 }
 
 .candidate-topline {
@@ -512,7 +517,7 @@ input::placeholder {
 .common-name {
   margin-bottom: 0.2rem;
   font-family: Georgia, serif;
-  font-size: clamp(1.7rem, 3vw, 2.45rem);
+  font-size: clamp(1.6rem, 2.6vw, 2.1rem);
   line-height: 1.05;
 }
 
@@ -557,7 +562,7 @@ input::placeholder {
   flex-wrap: wrap;
   gap: 0.45rem;
   min-height: 26px;
-  margin-top: 1.15rem;
+  margin-top: 0.9rem;
 }
 
 .tag {
@@ -578,19 +583,19 @@ input::placeholder {
 
 blockquote {
   position: relative;
-  margin: 2rem 0 1.8rem;
+  margin: 1.3rem 0;
   padding-left: 1.2rem;
   border-left: 3px solid var(--sun);
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.18rem, 2.2vw, 1.55rem);
-  line-height: 1.48;
+  font-size: clamp(1.1rem, 1.7vw, 1.32rem);
+  line-height: 1.45;
 }
 
 .identifier {
   display: flex;
   gap: 0.65rem;
   align-items: center;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 .identifier img,
@@ -618,13 +623,13 @@ blockquote {
 
 .boundary-note {
   margin-top: auto;
-  margin-bottom: 1.25rem;
-  padding: 0.8rem 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.85rem;
   border-left: 3px solid var(--moss-bright);
   color: var(--muted);
   background: #eef2ea;
-  font-size: 0.75rem;
-  line-height: 1.5;
+  font-size: 0.73rem;
+  line-height: 1.45;
 }
 
 .boundary-note strong {
@@ -826,7 +831,7 @@ footer {
   justify-content: space-between;
   gap: 2rem;
   align-items: center;
-  min-height: 100px;
+  min-height: 72px;
   border-top: 1px solid rgb(24 37 31 / 16%);
   color: var(--muted);
   font-size: 0.76rem;
@@ -845,11 +850,6 @@ footer a {
 }
 
 @media (max-width: 900px) {
-  .intro {
-    grid-template-columns: 1fr;
-    gap: 2.5rem;
-  }
-
   .intro > div > p:last-child {
     max-width: 760px;
   }
@@ -894,15 +894,15 @@ footer a {
   }
 
   main {
-    padding-block: 46px 60px;
+    padding-block: 26px 40px;
   }
 
   .intro {
-    margin-bottom: 42px;
+    margin-bottom: 24px;
   }
 
   h1 {
-    font-size: clamp(2.6rem, 15vw, 4rem);
+    font-size: clamp(1.9rem, 8vw, 2.6rem);
   }
 
   .filters,
