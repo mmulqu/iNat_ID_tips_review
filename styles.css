@@ -300,14 +300,59 @@ h1 {
 
 .filters form {
   display: grid;
-  grid-template-columns:
-    minmax(160px, 1fr)
-    minmax(125px, 0.7fr)
-    minmax(210px, 1.35fr)
-    minmax(140px, 0.75fr)
-    auto;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
   gap: 0.8rem;
   align-items: end;
+}
+
+label.autocomplete {
+  position: relative;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  box-shadow: var(--shadow);
+}
+
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.45rem;
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.suggestion strong {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.suggestion small {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.suggestion:hover {
+  background: var(--fern);
 }
 
 label {
@@ -569,6 +614,11 @@ input::placeholder {
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: 0.055em;
+}
+
+.tag-language {
+  color: var(--rust);
+  background: var(--rust-pale);
 }
 
 blockquote {

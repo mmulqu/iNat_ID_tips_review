@@ -92,6 +92,22 @@
             />
           </label>
 
+          <label class="autocomplete">
+            <span>Family or genus</span>
+            <input
+              id="taxon-search"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              role="combobox"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="taxon-suggestions"
+              placeholder="e.g. Corvidae"
+            />
+            <ul id="taxon-suggestions" class="suggestions" role="listbox" hidden></ul>
+          </label>
+
           <label>
             <span>Taxon ID</span>
             <input
@@ -102,6 +118,47 @@
               inputmode="numeric"
               placeholder="e.g. 47126"
             />
+          </label>
+
+          <label>
+            <span>Expand to species</span>
+            <select id="taxon-expand" name="expand">
+              <option value="0" selected>Exact taxon (no expansion)</option>
+              <option value="50">Top 50 most-observed</option>
+              <option value="100">Top 100 most-observed</option>
+              <option value="200">Top 200 most-observed</option>
+            </select>
+          </label>
+
+          <label class="autocomplete">
+            <span>Country</span>
+            <input
+              id="country-search"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              role="combobox"
+              aria-expanded="false"
+              aria-autocomplete="list"
+              aria-controls="country-suggestions"
+              placeholder="e.g. France"
+            />
+            <ul id="country-suggestions" class="suggestions" role="listbox" hidden></ul>
+          </label>
+
+          <label>
+            <span>Tip language</span>
+            <select id="tip-language" name="language">
+              <option value="any" selected>Any language</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="nl">Dutch</option>
+              <option value="other">Other (non-Latin / undetected)</option>
+            </select>
           </label>
 
           <label>

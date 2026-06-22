@@ -1,3 +1,5 @@
+import { detectLanguage } from "./language.js";
+
 const DIAGNOSTIC_PATTERNS = [
   /\bdiffers? from\b/i,
   /\bcan be (?:separated|distinguished)\b/i,
@@ -134,6 +136,7 @@ export function normalizeCandidate(record, taxon = {}) {
     taxonId: identification.taxon?.id,
     remark,
     wordCount: countWords(remark),
+    language: detectLanguage(remark),
     createdAt: identification.created_at,
     identifier,
     taxon,
@@ -167,6 +170,7 @@ export function normalizeObservationCandidates(observation) {
         taxonId: identification.taxon?.id,
         remark,
         wordCount: countWords(remark),
+        language: detectLanguage(remark),
         createdAt: identification.created_at,
         identifier: identification.user ?? {},
         taxon: identification.taxon ?? {},

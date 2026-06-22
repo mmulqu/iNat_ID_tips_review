@@ -8,10 +8,14 @@ import {
   createReviewRow,
   toCsv,
 } from "./review-log.js";
+import { detectLanguage, matchesLanguageFilter, LANGUAGE_LABELS } from "./language.js";
 
 const API_URL = "https://api.inaturalist.org/v2/exemplar_identifications";
 const OBSERVATIONS_URL = "https://api.inaturalist.org/v1/observations";
 const TAXA_URL = "https://api.inaturalist.org/v2/taxa";
+const SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_counts";
+const PLACES_AUTOCOMPLETE_URL = "https://api.inaturalist.org/v1/places/autocomplete";
+const TREES_WORKER_URL = "https://inat-trees-worker.intrinsic3141.workers.dev/search-taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
 const LOG_STORAGE_KEY = "inat-id-tip-review-log-v1";
 const SYNC_KEY_STORAGE = "inat-id-tip-review-sync-key-v1";
@@ -46,7 +50,13 @@ const elements = {
   errorMessage: document.querySelector("#error-message"),
   form: document.querySelector("#filter-form"),
   observationOwner: document.querySelector("#observation-owner"),
+  taxonSearch: document.querySelector("#taxon-search"),
+  taxonSuggestions: document.querySelector("#taxon-suggestions"),
   taxonId: document.querySelector("#taxon-id"),
+  taxonExpand: document.querySelector("#taxon-expand"),
+  countrySearch: document.querySelector("#country-search"),
+  countrySuggestions: document.querySelector("#country-suggestions"),
+  tipLanguage: document.querySelector("#tip-language"),
   query: document.querySelector("#query"),
   minimumWords: document.querySelector("#minimum-words"),
   queueLabel: document.querySelector("#queue-label"),
@@ -102,6 +112,11 @@ const state = {
   filters: {
     ownerLogin: "",
     taxonId: "",
+    baseTaxonId: "",
+    expand: 0,
+    placeId: "",
+    placeName: "",
+    language: "any",
     query: "",
     minimumWords: 12,
   },
@@ -284,6 +299,13 @@ function renderTags(candidate) {
     tag.textContent = label;
     elements.tags.append(tag);
   });
+  if (candidate.language) {
+    const langTag = document.createElement("span");
+    langTag.className = "tag tag-language";
+    langTag.textContent = LANGUAGE_LABELS[candidate.language] ?? candidate.language;
+    langTag.title = "Detected tip language (heuristic)";
+    elements.tags.append(langTag);
+  }
 }
 
 function renderIdentifier(candidate) {
@@ -379,6 +401,7 @@ function buildCandidateUrl() {
       order: "desc",
     });
     if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+    if (state.filters.placeId) params.set("place_id", state.filters.placeId);
     return `${OBSERVATIONS_URL}?${params}`;
   }
 
@@ -397,7 +420,14 @@ function buildCandidateUrl() {
 function syncUrl() {
   const params = new URLSearchParams();
   if (state.filters.ownerLogin) params.set("owner", state.filters.ownerLogin);
-  if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+  // Persist the chosen base taxon (not the expanded comma list) to keep URLs short.
+  const taxonForUrl = state.filters.expand > 0 ? state.filters.baseTaxonId : state.filters.taxonId;
+  if (taxonForUrl) params.set("taxon_id", taxonForUrl);
+  if (state.filters.expand) params.set("expand", String(state.filters.expand));
+  if (state.filters.placeId) params.set("place_id", state.filters.placeId);
+  if (state.filters.language && state.filters.language !== "any") {
+    params.set("language", state.filters.language);
+  }
   if (state.filters.query) params.set("q", state.filters.query);
   if (state.filters.minimumWords !== 12) params.set("min_words", state.filters.minimumWords);
   const suffix = params.size ? `?${params}` : location.pathname;
@@ -409,6 +439,37 @@ function matchesRemarkQuery(candidate) {
   if (!terms.length) return true;
   const remark = candidate.remark.toLowerCase();
   return terms.every((term) => remark.includes(term));
+}
+
+function matchesLanguage(candidate) {
+  return matchesLanguageFilter(state.filters.language, candidate.language);
+}
+
+// exemplar_identifications carries no place data and ignores place_id, so for a
+// country filter we batch-fetch place_ids for the page's observations and keep
+// only candidates whose observation falls inside the selected place.
+async function filterByPlace(candidates) {
+  if (!state.filters.placeId) return candidates;
+  const placeId = Number(state.filters.placeId);
+  const ids = [...new Set(candidates.map((c) => c.observationId).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const params = new URLSearchParams({
+    id: ids.join(","),
+    per_page: String(ids.length),
+    fields: "(id:!t,place_ids:!t)",
+  });
+  const response = await withTimeout(
+    fetch(`https://api.inaturalist.org/v2/observations?${params}`, { signal: state.request.signal }),
+    20000,
+    "The iNaturalist place lookup timed out.",
+  );
+  if (!response.ok) throw new Error(`iNaturalist returned HTTP ${response.status}.`);
+  const payload = await response.json();
+  const placeMap = new Map(
+    (payload.results ?? []).map((obs) => [obs.id, obs.place_ids ?? []]),
+  );
+  return candidates.filter((c) => (placeMap.get(c.observationId) ?? []).includes(placeId));
 }
 
 async function loadNextPage() {
@@ -435,11 +496,16 @@ async function loadNextPage() {
     state.loadedCount += records.length;
     state.page += 1;
     state.hasMore = records.length === PAGE_SIZE && state.loadedCount < MAX_API_RECORDS;
-    const candidates = (ownerSearchActive()
+    let candidates = (ownerSearchActive()
       ? records.flatMap(normalizeObservationCandidates)
       : records.map((record) => normalizeCandidate(record, {})))
       .filter(matchesRemarkQuery)
+      .filter(matchesLanguage)
       .filter((candidate) => !state.decisions[candidate.id]);
+
+    // Country filtering for the exemplar feed needs a secondary place lookup;
+    // the owner feed already constrains by place_id in the query itself.
+    if (!ownerSearchActive()) candidates = await filterByPlace(candidates);
 
     state.queue.push(...rankCandidates(candidates, state.filters.minimumWords));
     syncUrl();
@@ -616,32 +682,204 @@ function resetHistory() {
   loadQueue();
 }
 
-function applyFilters(event) {
+// Resolve the descendant species of a family/genus, ranked by observation count.
+async function expandTaxon(baseId, topN) {
+  const params = new URLSearchParams({ taxon_id: String(baseId), per_page: String(topN) });
+  const response = await withTimeout(
+    fetch(`${SPECIES_COUNTS_URL}?${params}`),
+    20000,
+    "The taxon expansion request timed out.",
+  );
+  if (!response.ok) throw new Error(`iNaturalist returned HTTP ${response.status}.`);
+  const payload = await response.json();
+  return (payload.results ?? [])
+    .map((row) => row.taxon?.id)
+    .filter(Boolean)
+    .join(",");
+}
+
+// Turn the chosen base taxon + expansion level into the literal taxon_id value
+// (single id or comma list) we send to the candidate query.
+async function resolveTaxonFilter() {
+  const baseId = state.filters.baseTaxonId || state.filters.taxonId;
+  if (state.filters.expand > 0 && /^\d+$/.test(baseId)) {
+    try {
+      const expanded = await expandTaxon(baseId, state.filters.expand);
+      state.filters.taxonId = expanded || baseId;
+    } catch {
+      state.filters.taxonId = baseId; // fall back to the family/genus id itself
+    }
+  } else {
+    state.filters.taxonId = baseId;
+  }
+}
+
+async function applyFilters(event) {
   event?.preventDefault();
+  closeSuggestions(elements.taxonSuggestions, elements.taxonSearch);
+  closeSuggestions(elements.countrySuggestions, elements.countrySearch);
   state.filters = {
     ownerLogin: elements.observationOwner.value.trim().replace(/^@/, ""),
     taxonId: elements.taxonId.value.trim(),
+    baseTaxonId: elements.taxonId.value.trim(),
+    expand: Number(elements.taxonExpand.value) || 0,
+    placeId: elements.countrySearch.dataset.placeId ?? "",
+    placeName: elements.countrySearch.value.trim(),
+    language: elements.tipLanguage.value || "any",
     query: elements.query.value.trim(),
     minimumWords: Number(elements.minimumWords.value),
   };
+  await resolveTaxonFilter();
   loadQueue();
 }
 
 function restoreFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
   state.filters.ownerLogin = (params.get("owner") ?? "").replace(/^@/, "");
-  state.filters.taxonId = params.get("taxon_id") ?? "";
+  state.filters.baseTaxonId = params.get("taxon_id") ?? "";
+  state.filters.taxonId = state.filters.baseTaxonId;
+  state.filters.expand = Number(params.get("expand") ?? 0) || 0;
+  state.filters.placeId = params.get("place_id") ?? "";
+  state.filters.language = params.get("language") ?? "any";
   state.filters.query = params.get("q") ?? "";
   state.filters.minimumWords = Number(params.get("min_words") ?? 12);
   elements.observationOwner.value = state.filters.ownerLogin;
-  elements.taxonId.value = state.filters.taxonId;
+  elements.taxonId.value = state.filters.baseTaxonId;
+  elements.taxonExpand.value = String(state.filters.expand);
+  elements.tipLanguage.value = state.filters.language;
   elements.query.value = state.filters.query;
   elements.minimumWords.value = String(state.filters.minimumWords);
+  if (state.filters.placeId) {
+    elements.countrySearch.dataset.placeId = state.filters.placeId;
+    hydratePlaceName(state.filters.placeId);
+  }
+}
+
+// Initial queue load: expand the restored taxon filter (if any) before fetching.
+async function initQueue() {
+  await resolveTaxonFilter();
+  loadQueue();
+}
+
+function closeSuggestions(listEl, input) {
+  listEl.replaceChildren();
+  listEl.hidden = true;
+  if (input) input.setAttribute("aria-expanded", "false");
+}
+
+function renderSuggestions(listEl, input, items, onSelect) {
+  listEl.replaceChildren();
+  if (!items.length) {
+    closeSuggestions(listEl, input);
+    return;
+  }
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "suggestion";
+    li.setAttribute("role", "option");
+    const primary = document.createElement("strong");
+    primary.textContent = item.primary;
+    li.append(primary);
+    if (item.secondary) {
+      const small = document.createElement("small");
+      small.textContent = item.secondary;
+      li.append(small);
+    }
+    // mousedown (not click) so selection runs before the input's blur closes the list.
+    li.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      onSelect(item);
+      closeSuggestions(listEl, input);
+    });
+    listEl.append(li);
+  }
+  listEl.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function attachAutocomplete(input, listEl, fetchFn, onSelect, onInput) {
+  let timer = null;
+  input.addEventListener("input", () => {
+    if (onInput) onInput();
+    const q = input.value.trim();
+    clearTimeout(timer);
+    if (q.length < 2) {
+      closeSuggestions(listEl, input);
+      return;
+    }
+    timer = setTimeout(async () => {
+      try {
+        const items = await fetchFn(q);
+        if (input.value.trim() === q) renderSuggestions(listEl, input, items, onSelect);
+      } catch {
+        closeSuggestions(listEl, input);
+      }
+    }, 250);
+  });
+  input.addEventListener("blur", () => setTimeout(() => closeSuggestions(listEl, input), 120));
+}
+
+async function searchTaxaSuggestions(q) {
+  const params = new URLSearchParams({ q, limit: "10" });
+  const response = await fetch(`${TREES_WORKER_URL}?${params}`);
+  if (!response.ok) return [];
+  const data = await response.json();
+  return (data.results ?? []).map((row) => ({
+    id: row.taxon_id,
+    primary: row.common_name ? `${row.name} — ${row.common_name}` : row.name,
+    secondary: row.rank,
+  }));
+}
+
+async function searchPlaceSuggestions(q) {
+  const params = new URLSearchParams({ q, per_page: "10" });
+  const response = await fetch(`${PLACES_AUTOCOMPLETE_URL}?${params}`);
+  if (!response.ok) return [];
+  const data = await response.json();
+  return (data.results ?? [])
+    .sort((a, b) => (a.admin_level ?? 99) - (b.admin_level ?? 99))
+    .map((row) => ({
+      id: row.id,
+      primary: row.display_name,
+      secondary: row.admin_level === 0 ? "country" : `admin level ${row.admin_level ?? "?"}`,
+    }));
+}
+
+async function hydratePlaceName(id) {
+  try {
+    const response = await fetch(`https://api.inaturalist.org/v1/places/${id}`);
+    if (!response.ok) return;
+    const data = await response.json();
+    const name = data.results?.[0]?.display_name;
+    if (name && !elements.countrySearch.value) elements.countrySearch.value = name;
+  } catch {
+    /* best-effort label only */
+  }
 }
 
 function isTypingTarget(target) {
   return target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement;
 }
+
+attachAutocomplete(
+  elements.taxonSearch,
+  elements.taxonSuggestions,
+  searchTaxaSuggestions,
+  (item) => {
+    elements.taxonId.value = item.id;
+    elements.taxonSearch.value = item.primary;
+  },
+);
+attachAutocomplete(
+  elements.countrySearch,
+  elements.countrySuggestions,
+  searchPlaceSuggestions,
+  (item) => {
+    elements.countrySearch.dataset.placeId = String(item.id);
+    elements.countrySearch.value = item.primary;
+  },
+  () => delete elements.countrySearch.dataset.placeId,
+);
 
 elements.form.addEventListener("submit", applyFilters);
 elements.reject.addEventListener("click", () => decide("reject"));
@@ -693,6 +931,5 @@ elements.image.addEventListener("error", () => {
 
 restoreFiltersFromUrl();
 updateStats();
-loadQueue();
+initQueue();
 scheduleSync(2000);
-  elements.observationOwner.value = state.filters.ownerLogin;
