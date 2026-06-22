@@ -42,7 +42,7 @@ Then open `http://localhost:4173`.
 - Reads `https://api.inaturalist.org/v1/observations` when an observation owner is supplied.
 - Retrieves the active candidate’s label from the public V2 taxa endpoint and caches it locally.
 - Makes all iNaturalist API requests directly from the reviewer’s browser, so reviewers use their own network/IP rate allocation.
-- Resolves family/genus names through the public `inat-trees-worker` `search-taxa` endpoint; no other backend is involved.
+- Resolves family/genus names through cloudflare worker `inat-trees-worker` `search-taxa` endpoint; no other backend is involved.
 - Stores review/reject decisions only in local storage, to avoid re-showing candidates you have already triaged. Nothing is sent anywhere else.
 - Does not request an iNaturalist login, API token, or OAuth grant.
 - Does not nominate, vote, downvote, or post on a user’s behalf.
