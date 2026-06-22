@@ -3,11 +3,6 @@ import {
   normalizeObservationCandidates,
   rankCandidates,
 } from "./ranking.js";
-import {
-  appendReviewRow,
-  createReviewRow,
-  toCsv,
-} from "./review-log.js";
 import { detectLanguage, matchesLanguageFilter, LANGUAGE_LABELS } from "./language.js";
 
 const API_URL = "https://api.inaturalist.org/v2/exemplar_identifications";
@@ -17,12 +12,8 @@ const SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_
 const PLACES_AUTOCOMPLETE_URL = "https://api.inaturalist.org/v1/places/autocomplete";
 const TREES_WORKER_URL = "https://inat-trees-worker.intrinsic3141.workers.dev/search-taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
-const LOG_STORAGE_KEY = "inat-id-tip-review-log-v1";
-const SYNC_KEY_STORAGE = "inat-id-tip-review-sync-key-v1";
-const SYNC_ENDPOINT = "https://inat-id-tips-review.intrinsic3141.workers.dev/reviews";
 const PAGE_SIZE = 50;
 const MAX_API_RECORDS = 1000;
-const SYNC_BATCH_SIZE = 100;
 const CANDIDATE_FIELDS = [
   "id",
   "identification.id",
@@ -75,18 +66,6 @@ const elements = {
   undo: document.querySelector("#undo-decision"),
   retry: document.querySelector("#retry-load"),
   reset: document.querySelector("#reset-history"),
-  downloadCsv: document.querySelector("#download-csv"),
-  syncStatus: document.querySelector("#sync-status"),
-  syncDialog: document.querySelector("#sync-dialog"),
-  openSync: document.querySelector("#open-sync"),
-  closeSync: document.querySelector("#close-sync"),
-  syncKey: document.querySelector("#sync-key"),
-  saveSyncKey: document.querySelector("#save-sync-key"),
-  syncNow: document.querySelector("#sync-now"),
-  syncDialogStatus: document.querySelector("#sync-dialog-status"),
-  reviewedCount: document.querySelector("#reviewed-count"),
-  rejectedCount: document.querySelector("#rejected-count"),
-  remainingCount: document.querySelector("#remaining-count"),
   shortcuts: document.querySelector("#shortcuts-dialog"),
   openShortcuts: document.querySelector("#open-shortcuts"),
   closeShortcuts: document.querySelector("#close-shortcuts"),
@@ -97,17 +76,12 @@ const state = {
   queue: [],
   cursor: 0,
   decisions: readDecisions(),
-  reviewLog: readReviewLog(),
   history: [],
   loading: false,
   request: null,
   page: 1,
   loadedCount: 0,
   hasMore: true,
-  syncing: false,
-  syncError: "",
-  logPersistError: false,
-  syncTimer: null,
   taxonCache: new Map(),
   filters: {
     ownerLogin: "",
@@ -134,83 +108,8 @@ function writeDecisions() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.decisions));
 }
 
-function readReviewLog() {
-  try {
-    const rows = JSON.parse(localStorage.getItem(LOG_STORAGE_KEY) ?? "[]");
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeReviewLog() {
-  try {
-    localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(state.reviewLog));
-    state.logPersistError = false;
-  } catch (error) {
-    // localStorage is capped (~5 MB per origin). The in-memory log keeps every
-    // row so CSV export and repository sync stay complete; we just can't persist
-    // across reloads once the browser quota is hit. Never let this break review.
-    state.logPersistError = true;
-    console.warn("Review log no longer fits in localStorage; relying on sync + CSV export.", error);
-  }
-}
-
-function syncKey() {
-  return sessionStorage.getItem(SYNC_KEY_STORAGE) ?? "";
-}
-
 function updateStats() {
-  const decisions = Object.values(state.decisions);
-  const pending = state.reviewLog.filter((row) => !row.synced_at).length;
-  elements.reviewedCount.textContent = decisions.filter((item) => item.decision === "review").length;
-  elements.rejectedCount.textContent = decisions.filter((item) => item.decision === "reject").length;
-  elements.remainingCount.textContent = state.loading
-    ? "—"
-    : Math.max(0, state.queue.length - state.cursor);
   elements.undo.disabled = state.history.length === 0;
-  elements.downloadCsv.disabled = state.reviewLog.length === 0;
-  elements.syncStatus.classList.toggle("is-connected", Boolean(syncKey()) && !state.syncing);
-  elements.syncStatus.classList.toggle("is-error", Boolean(state.syncError) || state.logPersistError);
-  const rows = `${state.reviewLog.length.toLocaleString()} rows`;
-  const detail = state.syncing
-    ? `syncing ${pending}`
-    : state.syncError
-      ? "sync error"
-      : state.logPersistError
-        ? "local save full · export CSV"
-        : syncKey()
-          ? `${pending} pending`
-          : "repository not connected";
-  elements.syncStatus.textContent = `${rows} · ${detail}`;
-}
-
-function recordAction(candidate, action) {
-  const row = { ...createReviewRow(candidate, action), synced_at: null };
-  state.reviewLog = appendReviewRow(state.reviewLog, row);
-  writeReviewLog();
-  updateStats();
-  scheduleSync();
-  return row.event_id;
-}
-
-function backfillTaxonLog(candidate) {
-  if (!candidate.taxon?.name) return;
-  let changed = false;
-  state.reviewLog = state.reviewLog.map((row) => {
-    if (String(row.taxon_id) !== String(candidate.taxonId) || row.species_name) return row;
-    changed = true;
-    return {
-      ...row,
-      species_name: candidate.taxon.name,
-      common_name: candidate.taxon.preferred_common_name ?? "",
-      synced_at: null,
-    };
-  });
-  if (changed) {
-    writeReviewLog();
-    scheduleSync();
-  }
 }
 
 function setLoading(loading) {
@@ -286,7 +185,6 @@ async function hydrateCandidateTaxon(candidate) {
   }
 
   candidate.taxon = await state.taxonCache.get(candidate.taxonId);
-  backfillTaxonLog(candidate);
   updateTaxonPresentation(candidate);
 }
 
@@ -538,88 +436,6 @@ function toast(message) {
   }, 3200);
 }
 
-function scheduleSync(delay) {
-  if (!syncKey() || state.syncing) return;
-  const pending = state.reviewLog.filter((row) => !row.synced_at).length;
-  if (!pending) return;
-  clearTimeout(state.syncTimer);
-  state.syncTimer = setTimeout(syncPending, delay ?? (pending >= 25 ? 2000 : 30000));
-}
-
-async function syncPending() {
-  const key = syncKey();
-  const pending = state.reviewLog.filter((row) => !row.synced_at).slice(0, SYNC_BATCH_SIZE);
-  if (!key) {
-    elements.syncDialogStatus.textContent = "Enter the Worker submission key before syncing.";
-    elements.syncKey.focus();
-    return;
-  }
-  if (!pending.length || state.syncing) return;
-
-  state.syncing = true;
-  updateStats();
-  elements.syncDialogStatus.textContent = `Syncing ${pending.length} row${pending.length === 1 ? "" : "s"}…`;
-
-  try {
-    state.syncError = "";
-    const response = await withTimeout(
-      fetch(SYNC_ENDPOINT, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-review-key": key },
-        body: JSON.stringify({ rows: pending }),
-      }),
-      30000,
-      "Repository sync timed out.",
-    );
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.error ?? `Repository sync returned ${response.status}`);
-
-    const syncedIds = new Set(pending.map((row) => row.event_id));
-    const syncedAt = new Date().toISOString();
-    state.reviewLog = state.reviewLog.map((row) =>
-      syncedIds.has(row.event_id) ? { ...row, synced_at: syncedAt } : row,
-    );
-    writeReviewLog();
-    elements.syncDialogStatus.textContent = `${payload.saved} rows saved; ${payload.total} rows are now in the repository CSV.`;
-    toast(`${payload.saved} review rows synced to the repository.`);
-  } catch (error) {
-    state.syncError = error.message;
-    elements.syncDialogStatus.textContent = error.message;
-    toast(`Repository sync failed: ${error.message}`);
-  } finally {
-    state.syncing = false;
-    updateStats();
-    if (state.reviewLog.some((row) => !row.synced_at)) scheduleSync(2000);
-  }
-}
-
-function saveSyncKey() {
-  const key = elements.syncKey.value.trim();
-  if (!key) {
-    elements.syncDialogStatus.textContent = "A submission key is required.";
-    return;
-  }
-  sessionStorage.setItem(SYNC_KEY_STORAGE, key);
-  state.syncError = "";
-  elements.syncKey.value = "";
-  elements.syncDialogStatus.textContent = "Connected for this browser tab. Syncing pending rows…";
-  updateStats();
-  syncPending();
-}
-
-function downloadCsv() {
-  if (!state.reviewLog.length) return;
-  const blob = new Blob([toCsv(state.reviewLog)], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `inat-id-tip-review-${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
 function advance() {
   state.cursor += 1;
   renderCandidate();
@@ -634,8 +450,7 @@ function decide(decision) {
     window.open(candidate.observationUrl, "_blank", "noopener,noreferrer");
   }
 
-  const logEventId = recordAction(candidate, decision === "review" ? "N" : "R");
-  state.history.push({ candidate, cursor: state.cursor, logEventId });
+  state.history.push({ candidate, cursor: state.cursor });
   state.decisions[candidate.id] = { decision, at: new Date().toISOString() };
   writeDecisions();
   toast(
@@ -649,11 +464,10 @@ function decide(decision) {
 function skip() {
   const candidate = activeCandidate();
   if (!candidate || state.loading) return;
-  recordAction(candidate, "S");
   state.cursor += 1;
   renderCandidate();
   elements.card.focus({ preventScroll: true });
-  toast("Skip recorded in the review log.");
+  toast("Skipped.");
 }
 
 function undo() {
@@ -661,8 +475,6 @@ function undo() {
   if (!last) return;
   delete state.decisions[last.candidate.id];
   writeDecisions();
-  state.reviewLog = state.reviewLog.filter((row) => row.event_id !== last.logEventId);
-  writeReviewLog();
   state.cursor = Math.max(0, last.cursor);
   state.queue[state.cursor] = last.candidate;
   renderCandidate();
@@ -888,18 +700,10 @@ elements.skip.addEventListener("click", skip);
 elements.undo.addEventListener("click", undo);
 elements.retry.addEventListener("click", loadQueue);
 elements.reset.addEventListener("click", resetHistory);
-elements.downloadCsv.addEventListener("click", downloadCsv);
-elements.openSync.addEventListener("click", () => elements.syncDialog.showModal());
-elements.closeSync.addEventListener("click", () => elements.syncDialog.close());
-elements.saveSyncKey.addEventListener("click", saveSyncKey);
-elements.syncNow.addEventListener("click", syncPending);
 elements.openShortcuts.addEventListener("click", () => elements.shortcuts.showModal());
 elements.closeShortcuts.addEventListener("click", () => elements.shortcuts.close());
 elements.shortcuts.addEventListener("click", (event) => {
   if (event.target === elements.shortcuts) elements.shortcuts.close();
-});
-elements.syncDialog.addEventListener("click", (event) => {
-  if (event.target === elements.syncDialog) elements.syncDialog.close();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -932,4 +736,3 @@ elements.image.addEventListener("error", () => {
 restoreFiltersFromUrl();
 updateStats();
 initQueue();
-scheduleSync(2000);

@@ -241,37 +241,6 @@ h1 {
   line-height: 1.7;
 }
 
-.session-stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--line);
-}
-
-.session-stats div {
-  min-width: 0;
-  padding: 1.1rem 0.9rem;
-  background: rgb(255 253 247 / 74%);
-}
-
-.session-stats dt {
-  font-family: Georgia, serif;
-  font-size: 1.65rem;
-  line-height: 1;
-}
-
-.session-stats dd {
-  margin: 0.45rem 0 0;
-  color: var(--muted);
-  font-size: 0.68rem;
-  line-height: 1.2;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
 .filters {
   padding: 1.4rem;
   border: 1px solid var(--line);
@@ -431,20 +400,6 @@ input::placeholder {
 .queue-meta > .queue-tools {
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.sync-status {
-  margin-right: 0.2rem;
-  color: var(--muted);
-  font-size: 0.72rem;
-}
-
-.sync-status.is-connected {
-  color: var(--moss-bright);
-}
-
-.sync-status.is-error {
-  color: var(--rust);
 }
 
 .live-dot {
@@ -851,31 +806,6 @@ dialog::backdrop {
   font-size: 0.75rem;
 }
 
-.dialog-copy {
-  margin-bottom: 1.2rem;
-  color: var(--muted);
-  font-size: 0.85rem;
-  line-height: 1.6;
-}
-
-.dialog-copy code {
-  padding: 0.15rem 0.3rem;
-  border-radius: 4px;
-  color: var(--ink);
-  background: #eceae3;
-}
-
-.dialog-actions {
-  display: flex;
-  gap: 0.7rem;
-  justify-content: flex-end;
-  margin-block: 1rem;
-}
-
-.dialog-actions .primary-button {
-  min-width: 130px;
-}
-
 .toast {
   position: fixed;
   z-index: 50;
@@ -975,16 +905,6 @@ footer a {
     font-size: clamp(2.6rem, 15vw, 4rem);
   }
 
-  .session-stats {
-    grid-template-columns: 1fr;
-  }
-
-  .session-stats div {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-  }
-
   .filters,
   .review-shell {
     padding: 0.85rem;
@@ -1006,10 +926,6 @@ footer a {
     width: 100%;
     align-items: stretch;
     justify-content: flex-start;
-  }
-
-  .sync-status {
-    width: 100%;
   }
 
   .review-card {
