@@ -300,7 +300,12 @@ h1 {
 
 .filters form {
   display: grid;
-  grid-template-columns: minmax(130px, 0.75fr) minmax(220px, 1.5fr) minmax(150px, 0.8fr) auto;
+  grid-template-columns:
+    minmax(160px, 1fr)
+    minmax(125px, 0.7fr)
+    minmax(210px, 1.35fr)
+    minmax(140px, 0.75fr)
+    auto;
   gap: 0.8rem;
   align-items: end;
 }

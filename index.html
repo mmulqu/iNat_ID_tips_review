@@ -76,10 +76,22 @@
             <p class="eyebrow">Candidate source</p>
             <h2 id="filters-title">Build a queue</h2>
           </div>
-          <p>Leave Taxon ID blank to review candidates across iNaturalist.</p>
+          <p>Enter an iNaturalist username to search ID remarks on that user’s observations.</p>
         </div>
 
         <form id="filter-form">
+          <label>
+            <span>Observation owner</span>
+            <input
+              id="observation-owner"
+              name="owner"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="iNat username"
+            />
+          </label>
+
           <label>
             <span>Taxon ID</span>
             <input
@@ -167,7 +179,8 @@
             <aside class="boundary-note">
               <strong>This site does not nominate or vote.</strong>
               The green action opens the source observation, where you make the decision on
-              iNaturalist. Rejections are stored only in this browser.
+              iNaturalist. Rejections are review-log decisions only and never downvote on
+              iNaturalist.
             </aside>
 
             <div class="card-actions">
@@ -205,7 +218,10 @@
             <kbd>U</kbd>
             Undo last decision
           </button>
-          <p>Loads 50 API records at a time and scans up to 1,000 per filter set.</p>
+          <p>
+            Loads 50 records at a time, up to 1,000. iNaturalist searches run directly from
+            this browser; only N/R/S result rows use the Worker.
+          </p>
         </div>
       </section>
     </main>

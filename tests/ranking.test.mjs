@@ -7,6 +7,7 @@ import {
   cleanRemark,
   countWords,
   normalizeCandidate,
+  normalizeObservationCandidates,
   rankCandidates,
   scoreCandidate,
 } from "../src/ranking.js";
@@ -99,4 +100,35 @@ test("buildObservationUrl safely handles missing observations", () => {
     buildObservationUrl(100, 200),
     "https://www.inaturalist.org/observations/100#identification-200",
   );
+});
+
+test("normalizeObservationCandidates includes remarks from every identifier on an owned observation", () => {
+  const candidates = normalizeObservationCandidates({
+    id: 123,
+    user: { login: "observer" },
+    photos: [{ url: "https://example.com/square.jpg" }],
+    identifications: [
+      {
+        id: 1,
+        body: "The observer notes this diagnostic feature because it separates two similar species clearly.",
+        current: true,
+        user: { login: "observer" },
+        taxon: { id: 7, name: "Species one" },
+      },
+      {
+        id: 2,
+        body: "A second identifier explains the different wing margin and visible white spots in detail.",
+        current: true,
+        user: { login: "someone_else" },
+        taxon: { id: 8, name: "Species two" },
+      },
+      { id: 3, body: null, current: true, user: { login: "no_remark" } },
+    ],
+  });
+
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(candidates.map((candidate) => candidate.identifier.login), ["observer", "someone_else"]);
+  assert.equal(candidates[0].observationOwner, "observer");
+  assert.equal(candidates[0].exemplarIdentificationId, "");
+  assert.equal(candidates[1].observationUrl, "https://www.inaturalist.org/observations/123#identification-2");
 });

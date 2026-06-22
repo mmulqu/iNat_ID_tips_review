@@ -2,7 +2,7 @@
 
 A keyboard-first, human-in-the-loop review queue for finding useful remarks attached to iNaturalist identifications.
 
-The app queries the public V2 `exemplar_identifications` resource for **un-nominated identification remarks**, scores explanatory language locally, and presents promising candidates for review. It does not call nomination or voting endpoints. “Review on iNaturalist” opens the source observation; “Reject locally” only records a decision in the browser’s local storage.
+The app queries the public V2 `exemplar_identifications` resource for **un-nominated identification remarks**, scores explanatory language locally, and presents promising candidates for review. When an Observation owner username is entered, it instead reads that user’s public observations and considers non-empty remarks from every current identification on those observations, regardless of who made the ID. It does not call nomination or voting endpoints. “Review on iNaturalist” opens the source observation; “Reject locally” only records a review decision.
 
 It requests 50 API records per page and continues through at most 1,000 records for each filter set. One ranked candidate is displayed at a time.
 
@@ -15,6 +15,8 @@ It requests 50 API records per page and continues through at most 1,000 records 
 - `?` — show keyboard shortcuts
 
 Use a numeric iNaturalist Taxon ID to focus the queue on a clade. Leave it blank for a global queue. Search and minimum-word filters are reflected in the URL so a queue can be bookmarked.
+
+Use Observation owner to limit the queue to identification remarks attached to one iNaturalist user’s observations. Taxon, text, and word-count filters continue to apply in this mode.
 
 ## Run locally
 
@@ -30,7 +32,9 @@ Then open `http://localhost:4173`.
 ## Data and privacy boundaries
 
 - Reads public data from `https://api.inaturalist.org/v2/exemplar_identifications`.
+- Reads `https://api.inaturalist.org/v1/observations` when an observation owner is supplied.
 - Retrieves the active candidate’s label from the public V2 taxa endpoint and caches it locally.
+- Makes all iNaturalist API requests directly from the reviewer’s browser. The Worker is not an iNaturalist API proxy, so reviewers use their own network/IP rate allocation.
 - Stores review/reject decisions only in local storage.
 - Keeps a capped 1,000-row N/R/S audit log locally and supports CSV download.
 - Sends pending rows in batches to a protected Cloudflare Worker when a submission key is entered.

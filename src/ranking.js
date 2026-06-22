@@ -128,6 +128,7 @@ export function normalizeCandidate(record, taxon = {}) {
 
   return {
     id: record.id,
+    exemplarIdentificationId: record.id,
     identificationId: identification.id,
     observationId: observation.id,
     taxonId: identification.taxon?.id,
@@ -141,7 +142,43 @@ export function normalizeCandidate(record, taxon = {}) {
     observationUrl: buildObservationUrl(observation.id, identification.id),
     tags: classifyRemark(remark),
     votes: record.cached_votes_total ?? 0,
+    source: "exemplar",
   };
+}
+
+export function normalizeObservationCandidates(observation) {
+  const photos = observation.photos ?? [];
+  const owner = observation.user ?? {};
+
+  return (observation.identifications ?? [])
+    .filter((identification) => (
+      identification.body
+      && identification.current !== false
+      && !identification.hidden
+      && !identification.spam
+    ))
+    .map((identification) => {
+      const remark = cleanRemark(identification.body);
+      return {
+        id: `identification-${identification.id}`,
+        exemplarIdentificationId: "",
+        identificationId: identification.id,
+        observationId: observation.id,
+        taxonId: identification.taxon?.id,
+        remark,
+        wordCount: countWords(remark),
+        createdAt: identification.created_at,
+        identifier: identification.user ?? {},
+        taxon: identification.taxon ?? {},
+        photos,
+        photoCount: photos.length,
+        observationUrl: buildObservationUrl(observation.id, identification.id),
+        observationOwner: owner.login ?? "",
+        tags: ["owner observation", ...classifyRemark(remark)].slice(0, 3),
+        votes: 0,
+        source: "owned_observation",
+      };
+    });
 }
 
 export const rankingInternals = {

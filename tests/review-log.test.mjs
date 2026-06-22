@@ -13,6 +13,7 @@ const candidate = {
   identificationId: 99,
   observationId: 123,
   observationUrl: "https://www.inaturalist.org/observations/123#identification-99",
+  observationOwner: "observer",
   taxonId: 7,
   taxon: { name: "Example species", preferred_common_name: "Example common name" },
 };
@@ -23,6 +24,7 @@ test("createReviewRow records the requested identifiers and names", () => {
   assert.equal(row.exemplar_identification_id, 42);
   assert.equal(row.identification_id, 99);
   assert.equal(row.observation_id, 123);
+  assert.equal(row.observation_owner, "observer");
   assert.equal(row.taxon_id, 7);
   assert.equal(row.species_name, "Example species");
   assert.equal(row.common_name, "Example common name");

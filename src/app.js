@@ -1,5 +1,6 @@
 import {
   normalizeCandidate,
+  normalizeObservationCandidates,
   rankCandidates,
 } from "./ranking.js";
 import {
@@ -10,6 +11,7 @@ import {
 } from "./review-log.js";
 
 const API_URL = "https://api.inaturalist.org/v2/exemplar_identifications";
+const OBSERVATIONS_URL = "https://api.inaturalist.org/v1/observations";
 const TAXA_URL = "https://api.inaturalist.org/v2/taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
 const LOG_STORAGE_KEY = "inat-id-tip-review-log-v1";
@@ -44,6 +46,7 @@ const elements = {
   error: document.querySelector("#error-state"),
   errorMessage: document.querySelector("#error-message"),
   form: document.querySelector("#filter-form"),
+  observationOwner: document.querySelector("#observation-owner"),
   taxonId: document.querySelector("#taxon-id"),
   query: document.querySelector("#query"),
   minimumWords: document.querySelector("#minimum-words"),
@@ -97,6 +100,7 @@ const state = {
   syncTimer: null,
   taxonCache: new Map(),
   filters: {
+    ownerLogin: "",
     taxonId: "",
     query: "",
     minimumWords: 12,
@@ -191,6 +195,10 @@ function setLoading(loading) {
 
 function activeCandidate() {
   return state.queue[state.cursor];
+}
+
+function ownerSearchActive() {
+  return Boolean(state.filters.ownerLogin);
 }
 
 function setView(view) {
@@ -313,7 +321,10 @@ function renderCandidate() {
 
   setView("card");
   const queuePosition = state.cursor + 1;
-  elements.queueLabel.textContent = `Candidate ${queuePosition} of ${state.queue.length} · ${state.loadedCount} API records scanned`;
+  const sourceLabel = ownerSearchActive()
+    ? `observations by @${state.filters.ownerLogin}`
+    : "un-nominated exemplar remarks";
+  elements.queueLabel.textContent = `Candidate ${queuePosition} of ${state.queue.length} · ${state.loadedCount} ${sourceLabel} scanned`;
   updateTaxonPresentation(candidate);
   elements.score.textContent = candidate.score;
   elements.remark.textContent = candidate.remark;
@@ -344,6 +355,18 @@ function renderCandidate() {
 }
 
 function buildCandidateUrl() {
+  if (ownerSearchActive()) {
+    const params = new URLSearchParams({
+      user_login: state.filters.ownerLogin,
+      per_page: String(PAGE_SIZE),
+      page: String(state.page),
+      order_by: "updated_at",
+      order: "desc",
+    });
+    if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+    return `${OBSERVATIONS_URL}?${params}`;
+  }
+
   const params = new URLSearchParams({
     per_page: String(PAGE_SIZE),
     page: String(state.page),
@@ -358,6 +381,7 @@ function buildCandidateUrl() {
 
 function syncUrl() {
   const params = new URLSearchParams();
+  if (state.filters.ownerLogin) params.set("owner", state.filters.ownerLogin);
   if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
   if (state.filters.query) params.set("q", state.filters.query);
   if (state.filters.minimumWords !== 12) params.set("min_words", state.filters.minimumWords);
@@ -365,12 +389,20 @@ function syncUrl() {
   history.replaceState(null, "", suffix);
 }
 
+function matchesRemarkQuery(candidate) {
+  const terms = state.filters.query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const remark = candidate.remark.toLowerCase();
+  return terms.every((term) => remark.includes(term));
+}
+
 async function loadNextPage() {
   if (state.loading || !state.hasMore || state.loadedCount >= MAX_API_RECORDS) return;
   state.request = new AbortController();
   setView("card");
   setLoading(true);
-  elements.queueLabel.textContent = `Loading API records ${state.loadedCount + 1}–${Math.min(
+  const sourceType = ownerSearchActive() ? "observations" : "exemplar remarks";
+  elements.queueLabel.textContent = `Loading ${sourceType} ${state.loadedCount + 1}–${Math.min(
     state.loadedCount + PAGE_SIZE,
     MAX_API_RECORDS,
   )}…`;
@@ -388,8 +420,10 @@ async function loadNextPage() {
     state.loadedCount += records.length;
     state.page += 1;
     state.hasMore = records.length === PAGE_SIZE && state.loadedCount < MAX_API_RECORDS;
-    const candidates = records
-      .map((record) => normalizeCandidate(record, {}))
+    const candidates = (ownerSearchActive()
+      ? records.flatMap(normalizeObservationCandidates)
+      : records.map((record) => normalizeCandidate(record, {})))
+      .filter(matchesRemarkQuery)
       .filter((candidate) => !state.decisions[candidate.id]);
 
     state.queue.push(...rankCandidates(candidates, state.filters.minimumWords));
@@ -570,6 +604,7 @@ function resetHistory() {
 function applyFilters(event) {
   event?.preventDefault();
   state.filters = {
+    ownerLogin: elements.observationOwner.value.trim().replace(/^@/, ""),
     taxonId: elements.taxonId.value.trim(),
     query: elements.query.value.trim(),
     minimumWords: Number(elements.minimumWords.value),
@@ -579,9 +614,11 @@ function applyFilters(event) {
 
 function restoreFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
+  state.filters.ownerLogin = (params.get("owner") ?? "").replace(/^@/, "");
   state.filters.taxonId = params.get("taxon_id") ?? "";
   state.filters.query = params.get("q") ?? "";
   state.filters.minimumWords = Number(params.get("min_words") ?? 12);
+  elements.observationOwner.value = state.filters.ownerLogin;
   elements.taxonId.value = state.filters.taxonId;
   elements.query.value = state.filters.query;
   elements.minimumWords.value = String(state.filters.minimumWords);
@@ -643,3 +680,4 @@ restoreFiltersFromUrl();
 updateStats();
 loadQueue();
 scheduleSync(2000);
+  elements.observationOwner.value = state.filters.ownerLogin;
