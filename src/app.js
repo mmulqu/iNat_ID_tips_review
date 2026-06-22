@@ -4,7 +4,6 @@ import {
   rankCandidates,
 } from "./ranking.js";
 import {
-  MAX_REVIEW_LOG_ROWS,
   appendReviewRow,
   createReviewRow,
   toCsv,
@@ -97,6 +96,7 @@ const state = {
   hasMore: true,
   syncing: false,
   syncError: "",
+  logPersistError: false,
   syncTimer: null,
   taxonCache: new Map(),
   filters: {
@@ -122,14 +122,23 @@ function writeDecisions() {
 function readReviewLog() {
   try {
     const rows = JSON.parse(localStorage.getItem(LOG_STORAGE_KEY) ?? "[]");
-    return Array.isArray(rows) ? rows.slice(-MAX_REVIEW_LOG_ROWS) : [];
+    return Array.isArray(rows) ? rows : [];
   } catch {
     return [];
   }
 }
 
 function writeReviewLog() {
-  localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(state.reviewLog));
+  try {
+    localStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(state.reviewLog));
+    state.logPersistError = false;
+  } catch (error) {
+    // localStorage is capped (~5 MB per origin). The in-memory log keeps every
+    // row so CSV export and repository sync stay complete; we just can't persist
+    // across reloads once the browser quota is hit. Never let this break review.
+    state.logPersistError = true;
+    console.warn("Review log no longer fits in localStorage; relying on sync + CSV export.", error);
+  }
 }
 
 function syncKey() {
@@ -147,12 +156,18 @@ function updateStats() {
   elements.undo.disabled = state.history.length === 0;
   elements.downloadCsv.disabled = state.reviewLog.length === 0;
   elements.syncStatus.classList.toggle("is-connected", Boolean(syncKey()) && !state.syncing);
-  elements.syncStatus.classList.toggle("is-error", Boolean(state.syncError));
-  elements.syncStatus.textContent = state.syncing
-    ? `${state.reviewLog.length.toLocaleString()} / ${MAX_REVIEW_LOG_ROWS.toLocaleString()} rows · syncing ${pending}`
-    : `${state.reviewLog.length.toLocaleString()} / ${MAX_REVIEW_LOG_ROWS.toLocaleString()} rows · ${
-        state.syncError ? "sync error" : syncKey() ? `${pending} pending` : "repository not connected"
-      }`;
+  elements.syncStatus.classList.toggle("is-error", Boolean(state.syncError) || state.logPersistError);
+  const rows = `${state.reviewLog.length.toLocaleString()} rows`;
+  const detail = state.syncing
+    ? `syncing ${pending}`
+    : state.syncError
+      ? "sync error"
+      : state.logPersistError
+        ? "local save full · export CSV"
+        : syncKey()
+          ? `${pending} pending`
+          : "repository not connected";
+  elements.syncStatus.textContent = `${rows} · ${detail}`;
 }
 
 function recordAction(candidate, action) {

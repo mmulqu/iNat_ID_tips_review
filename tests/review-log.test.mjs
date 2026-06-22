@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  MAX_REVIEW_LOG_ROWS,
   appendReviewRow,
   createReviewRow,
   toCsv,
@@ -36,12 +35,20 @@ test("createReviewRow accepts only N, R, and S", () => {
   assert.throws(() => createReviewRow(candidate, "X"), /Unsupported review action/);
 });
 
-test("appendReviewRow keeps only the newest 1000 rows", () => {
-  const rows = Array.from({ length: MAX_REVIEW_LOG_ROWS }, (_, index) => ({ event_id: index }));
-  const result = appendReviewRow(rows, { event_id: MAX_REVIEW_LOG_ROWS });
-  assert.equal(result.length, MAX_REVIEW_LOG_ROWS);
+test("appendReviewRow appends every row when no limit is given", () => {
+  const rows = Array.from({ length: 2000 }, (_, index) => ({ event_id: index }));
+  const result = appendReviewRow(rows, { event_id: 2000 });
+  assert.equal(result.length, 2001);
+  assert.equal(result[0].event_id, 0);
+  assert.equal(result.at(-1).event_id, 2000);
+});
+
+test("appendReviewRow still caps when an explicit limit is passed", () => {
+  const rows = Array.from({ length: 1000 }, (_, index) => ({ event_id: index }));
+  const result = appendReviewRow(rows, { event_id: 1000 }, 1000);
+  assert.equal(result.length, 1000);
   assert.equal(result[0].event_id, 1);
-  assert.equal(result.at(-1).event_id, MAX_REVIEW_LOG_ROWS);
+  assert.equal(result.at(-1).event_id, 1000);
 });
 
 test("toCsv emits Excel-friendly UTF-8 CSV with escaping and formula protection", () => {

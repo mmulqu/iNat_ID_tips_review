@@ -1,4 +1,4 @@
-import { CSV_COLUMNS, MAX_REVIEW_LOG_ROWS, toCsv } from "../../src/review-log.js";
+import { CSV_COLUMNS, toCsv } from "../../src/review-log.js";
 
 const REVIEW_PATH = "data/reviews.csv";
 const MAX_BATCH_ROWS = 100;
@@ -117,8 +117,7 @@ export function mergeRows(existingRows, incomingRows) {
     if (row.event_id) merged.set(row.event_id, row);
   });
   return [...merged.values()]
-    .sort((left, right) => String(left.recorded_at).localeCompare(String(right.recorded_at)))
-    .slice(-MAX_REVIEW_LOG_ROWS);
+    .sort((left, right) => String(left.recorded_at).localeCompare(String(right.recorded_at)));
 }
 
 function githubHeaders(token) {

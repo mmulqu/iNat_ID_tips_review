@@ -1,5 +1,3 @@
-export const MAX_REVIEW_LOG_ROWS = 1000;
-
 export const CSV_COLUMNS = [
   "event_id",
   "action",
@@ -39,7 +37,8 @@ export function createReviewRow(candidate, action, recordedAt = new Date().toISO
   };
 }
 
-export function appendReviewRow(rows, row, limit = MAX_REVIEW_LOG_ROWS) {
+export function appendReviewRow(rows, row, limit = null) {
+  if (limit === null) return [...rows, row];
   if (!Number.isInteger(limit) || limit < 1) throw new Error("Review log limit must be positive");
   return [...rows, row].slice(-limit);
 }
