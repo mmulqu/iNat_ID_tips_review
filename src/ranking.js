@@ -185,6 +185,45 @@ export function normalizeObservationCandidates(observation) {
     });
 }
 
+// Records from /v1/identifications: the record IS the identification, with the
+// observation (and its photos/owner) nested inside. Returns [] for IDs without
+// a usable remark so it can be used with flatMap.
+export function normalizeIdentificationCandidates(identification) {
+  if (
+    !identification.body
+    || identification.current === false
+    || identification.hidden
+    || identification.spam
+  ) {
+    return [];
+  }
+
+  const observation = identification.observation ?? {};
+  const photos = observation.photos ?? [];
+  const remark = cleanRemark(identification.body);
+
+  return [{
+    id: `identification-${identification.id}`,
+    exemplarIdentificationId: "",
+    identificationId: identification.id,
+    observationId: observation.id,
+    taxonId: identification.taxon?.id,
+    remark,
+    wordCount: countWords(remark),
+    language: detectLanguage(remark),
+    createdAt: identification.created_at,
+    identifier: identification.user ?? {},
+    taxon: identification.taxon ?? {},
+    photos,
+    photoCount: photos.length,
+    observationUrl: buildObservationUrl(observation.id, identification.id),
+    observationOwner: observation.user?.login ?? "",
+    tags: ["by this identifier", ...classifyRemark(remark)].slice(0, 3),
+    votes: 0,
+    source: "identifier",
+  }];
+}
+
 export const rankingInternals = {
   DIAGNOSTIC_PATTERNS,
   CONTRAST_PATTERNS,

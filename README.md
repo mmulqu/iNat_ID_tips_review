@@ -21,7 +21,8 @@ It requests 200 API records per page and pages on demand as you work through the
 - **Country** — narrow the queue to observations within a country (or other place) resolved through iNaturalist place autocomplete.
 - **Tip language** — limit the queue to remarks detected as a chosen language. Detection is heuristic and shown as a tag on each card.
 - **Remark contains** / **Minimum words** — text and length filters.
-- **Observation owner** — limit the queue to identification remarks attached to one iNaturalist user’s observations.
+- **Observation owner** — limit the queue to identification remarks attached to one iNaturalist user’s observations (reads `/v1/observations`).
+- **ID author** — limit the queue to remarks a user wrote as an identifier, regardless of whose observation it is (reads `/v1/identifications`; there is no V2 equivalent). If both username fields are set, ID author takes precedence.
 
 Filters are reflected in the URL so a queue can be bookmarked and shared.
 

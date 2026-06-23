@@ -61,7 +61,7 @@
             <p class="eyebrow">Candidate source</p>
             <h2 id="filters-title">Build a queue</h2>
           </div>
-          <p>Enter an iNaturalist username to search ID remarks on that user’s observations.</p>
+          <p>Review the default un-nominated remark feed, or enter a username to see remarks on that person’s observations (owner) or remarks they wrote as an identifier.</p>
         </div>
 
         <form id="filter-form">
@@ -70,6 +70,18 @@
             <input
               id="observation-owner"
               name="owner"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="iNat username"
+            />
+          </label>
+
+          <label>
+            <span>ID author</span>
+            <input
+              id="identifier-login"
+              name="identifier"
               type="text"
               autocomplete="off"
               spellcheck="false"

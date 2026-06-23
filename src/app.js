@@ -1,12 +1,16 @@
 import {
   normalizeCandidate,
   normalizeObservationCandidates,
+  normalizeIdentificationCandidates,
   rankCandidates,
 } from "./ranking.js";
 import { detectLanguage, matchesLanguageFilter, LANGUAGE_LABELS } from "./language.js";
 
 const API_URL = "https://api.inaturalist.org/v2/exemplar_identifications";
 const OBSERVATIONS_URL = "https://api.inaturalist.org/v1/observations";
+// No V2 identifications endpoint exists (/v2/identifications 404s), so this
+// one feature uses V1. It still honours taxon_id and place_id filters.
+const IDENTIFICATIONS_URL = "https://api.inaturalist.org/v1/identifications";
 const TAXA_URL = "https://api.inaturalist.org/v2/taxa";
 const SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_counts";
 const PLACES_AUTOCOMPLETE_URL = "https://api.inaturalist.org/v1/places/autocomplete";
@@ -43,6 +47,7 @@ const elements = {
   errorMessage: document.querySelector("#error-message"),
   form: document.querySelector("#filter-form"),
   observationOwner: document.querySelector("#observation-owner"),
+  identifier: document.querySelector("#identifier-login"),
   taxonSearch: document.querySelector("#taxon-search"),
   taxonSuggestions: document.querySelector("#taxon-suggestions"),
   taxonId: document.querySelector("#taxon-id"),
@@ -87,6 +92,7 @@ const state = {
   taxonCache: new Map(),
   filters: {
     ownerLogin: "",
+    identifierLogin: "",
     taxonId: "",
     baseTaxonId: "",
     expand: 0,
@@ -128,8 +134,19 @@ function activeCandidate() {
   return state.queue[state.cursor];
 }
 
+// Three queue sources: the default exemplar feed, observations by an owner, or
+// identifications authored by a user. Identifier search takes precedence when
+// both username fields are filled (combining the two is a rare case).
+function identifierSearchActive() {
+  return Boolean(state.filters.identifierLogin);
+}
+
 function ownerSearchActive() {
-  return Boolean(state.filters.ownerLogin);
+  return Boolean(state.filters.ownerLogin) && !identifierSearchActive();
+}
+
+function exemplarFeedActive() {
+  return !ownerSearchActive() && !identifierSearchActive();
 }
 
 function setView(view) {
@@ -258,9 +275,11 @@ function renderCandidate() {
 
   setView("card");
   const queuePosition = state.cursor + 1;
-  const sourceLabel = ownerSearchActive()
-    ? `observations by @${state.filters.ownerLogin}`
-    : "un-nominated exemplar remarks";
+  const sourceLabel = identifierSearchActive()
+    ? `identifications by @${state.filters.identifierLogin}`
+    : ownerSearchActive()
+      ? `observations by @${state.filters.ownerLogin}`
+      : "un-nominated exemplar remarks";
   elements.queueLabel.textContent = `Candidate ${queuePosition} of ${state.queue.length} · ${state.loadedCount} ${sourceLabel} scanned`;
   updateTaxonPresentation(candidate);
   elements.score.textContent = candidate.score;
@@ -292,6 +311,19 @@ function renderCandidate() {
 }
 
 function buildCandidateUrl() {
+  if (identifierSearchActive()) {
+    const params = new URLSearchParams({
+      user_login: state.filters.identifierLogin,
+      per_page: String(PAGE_SIZE),
+      page: String(state.page),
+      order_by: "created_at",
+      order: "desc",
+    });
+    if (state.filters.taxonId) params.set("taxon_id", state.filters.taxonId);
+    if (state.filters.placeId) params.set("place_id", state.filters.placeId);
+    return `${IDENTIFICATIONS_URL}?${params}`;
+  }
+
   if (ownerSearchActive()) {
     const params = new URLSearchParams({
       user_login: state.filters.ownerLogin,
@@ -320,6 +352,7 @@ function buildCandidateUrl() {
 function syncUrl() {
   const params = new URLSearchParams();
   if (state.filters.ownerLogin) params.set("owner", state.filters.ownerLogin);
+  if (state.filters.identifierLogin) params.set("identifier", state.filters.identifierLogin);
   // Persist the chosen base taxon (not the expanded comma list) to keep URLs short.
   const taxonForUrl = state.filters.expand > 0 ? state.filters.baseTaxonId : state.filters.taxonId;
   if (taxonForUrl) params.set("taxon_id", taxonForUrl);
@@ -377,7 +410,11 @@ async function loadNextPage() {
   state.request = new AbortController();
   setView("card");
   setLoading(true);
-  const sourceType = ownerSearchActive() ? "observations" : "exemplar remarks";
+  const sourceType = identifierSearchActive()
+    ? "identifications"
+    : ownerSearchActive()
+      ? "observations"
+      : "exemplar remarks";
   elements.queueLabel.textContent = `Loading ${sourceType} ${state.loadedCount + 1}–${Math.min(
     state.loadedCount + PAGE_SIZE,
     MAX_API_RECORDS,
@@ -396,16 +433,18 @@ async function loadNextPage() {
     state.loadedCount += records.length;
     state.page += 1;
     state.hasMore = records.length === PAGE_SIZE && state.loadedCount < MAX_API_RECORDS;
-    let candidates = (ownerSearchActive()
-      ? records.flatMap(normalizeObservationCandidates)
-      : records.map((record) => normalizeCandidate(record, {})))
+    let candidates = (identifierSearchActive()
+      ? records.flatMap(normalizeIdentificationCandidates)
+      : ownerSearchActive()
+        ? records.flatMap(normalizeObservationCandidates)
+        : records.map((record) => normalizeCandidate(record, {})))
       .filter(matchesRemarkQuery)
       .filter(matchesLanguage)
       .filter((candidate) => !state.decisions[candidate.id]);
 
     // Country filtering for the exemplar feed needs a secondary place lookup;
-    // the owner feed already constrains by place_id in the query itself.
-    if (!ownerSearchActive()) candidates = await filterByPlace(candidates);
+    // the owner and identifier feeds already constrain by place_id in-query.
+    if (exemplarFeedActive()) candidates = await filterByPlace(candidates);
 
     state.queue.push(...rankCandidates(candidates, state.filters.minimumWords));
     syncUrl();
@@ -534,6 +573,7 @@ async function applyFilters(event) {
   closeSuggestions(elements.countrySuggestions, elements.countrySearch);
   state.filters = {
     ownerLogin: elements.observationOwner.value.trim().replace(/^@/, ""),
+    identifierLogin: elements.identifier.value.trim().replace(/^@/, ""),
     taxonId: elements.taxonId.value.trim(),
     baseTaxonId: elements.taxonId.value.trim(),
     expand: Number(elements.taxonExpand.value) || 0,
@@ -550,6 +590,7 @@ async function applyFilters(event) {
 function restoreFiltersFromUrl() {
   const params = new URLSearchParams(location.search);
   state.filters.ownerLogin = (params.get("owner") ?? "").replace(/^@/, "");
+  state.filters.identifierLogin = (params.get("identifier") ?? "").replace(/^@/, "");
   state.filters.baseTaxonId = params.get("taxon_id") ?? "";
   state.filters.taxonId = state.filters.baseTaxonId;
   state.filters.expand = Number(params.get("expand") ?? 0) || 0;
@@ -558,6 +599,7 @@ function restoreFiltersFromUrl() {
   state.filters.query = params.get("q") ?? "";
   state.filters.minimumWords = Number(params.get("min_words") ?? 12);
   elements.observationOwner.value = state.filters.ownerLogin;
+  elements.identifier.value = state.filters.identifierLogin;
   elements.taxonId.value = state.filters.baseTaxonId;
   elements.taxonExpand.value = String(state.filters.expand);
   elements.tipLanguage.value = state.filters.language;
