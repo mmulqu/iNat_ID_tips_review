@@ -4,7 +4,7 @@ A keyboard-first, human-in-the-loop review queue for finding useful remarks atta
 
 The app queries the public V2 `exemplar_identifications` resource for **un-nominated identification remarks**, scores explanatory language locally, and presents promising candidates for review. When an Observation owner username is entered, it instead reads that user’s public observations and considers non-empty remarks from every current identification on those observations, regardless of who made the ID. It does not call nomination or voting endpoints. “Review on iNaturalist” opens the source observation so you can nominate the remark yourself; “Reject locally” only hides the candidate in your browser.
 
-It requests 50 API records per page and continues through at most 1,000 records for each filter set. One ranked candidate is displayed at a time.
+It requests 200 API records per page and pages on demand as you work through the queue, deferring to iNaturalist’s own pagination and rate limits rather than imposing a tighter cap. One ranked candidate is displayed at a time.
 
 ## Review controls
 

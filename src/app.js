@@ -12,8 +12,10 @@ const SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_
 const PLACES_AUTOCOMPLETE_URL = "https://api.inaturalist.org/v1/places/autocomplete";
 const TREES_WORKER_URL = "https://inat-trees-worker.intrinsic3141.workers.dev/search-taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
-const PAGE_SIZE = 50;
-const MAX_API_RECORDS = 1000;
+const PAGE_SIZE = 200;
+// iNaturalist limits deep pagination to 10,000 results (page * per_page) and
+// ~10k requests/day; we defer to those rather than imposing a tighter cap.
+const MAX_API_RECORDS = 10000;
 const CANDIDATE_FIELDS = [
   "id",
   "identification.id",
