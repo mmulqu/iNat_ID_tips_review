@@ -16,6 +16,12 @@ const SPECIES_COUNTS_URL = "https://api.inaturalist.org/v1/observations/species_
 const PLACES_AUTOCOMPLETE_URL = "https://api.inaturalist.org/v1/places/autocomplete";
 const TREES_WORKER_URL = "https://inat-trees-worker.intrinsic3141.workers.dev/search-taxa";
 const STORAGE_KEY = "inat-id-tip-review-decisions-v1";
+// Storage keys from the retired CSV review-log / repository-sync feature. They
+// are no longer written, but an old session can still have a multi-megabyte log
+// occupying the ~5 MB localStorage quota — enough to make even small writes
+// (like the decisions store) throw. Purge them once on startup.
+const LEGACY_STORAGE_KEYS = ["inat-id-tip-review-log-v1"];
+const LEGACY_SESSION_KEYS = ["inat-id-tip-review-sync-key-v1"];
 const PAGE_SIZE = 200;
 // iNaturalist limits deep pagination to 10,000 results (page * per_page) and
 // ~10k requests/day; we defer to those rather than imposing a tighter cap.
@@ -113,7 +119,22 @@ function readDecisions() {
 }
 
 function writeDecisions() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.decisions));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.decisions));
+  } catch (error) {
+    // Out of localStorage quota: keep triaging this session (decisions stay in
+    // memory) rather than letting the write abort reject/advance.
+    console.warn("Could not persist local decisions (storage full); continuing in memory.", error);
+  }
+}
+
+function purgeLegacyStorage() {
+  try {
+    for (const key of LEGACY_STORAGE_KEYS) localStorage.removeItem(key);
+    for (const key of LEGACY_SESSION_KEYS) sessionStorage.removeItem(key);
+  } catch {
+    /* storage unavailable; nothing to reclaim */
+  }
 }
 
 function updateStats() {
@@ -777,6 +798,7 @@ elements.image.addEventListener("error", () => {
   elements.imageCredit.textContent = "";
 });
 
+purgeLegacyStorage();
 restoreFiltersFromUrl();
 updateStats();
 initQueue();
